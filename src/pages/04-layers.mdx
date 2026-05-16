@@ -7,8 +7,155 @@ prev: "/03-attention"
 next: "/05-generation"
 ---
 
+import LayerStack from '../components/LayerStack.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-Chapter content coming soon.
+A transformer isn't a single attention operation — it's a **stack of identical blocks**, each one refining the representations that come in from below. Ch 3 showed you what one attention layer does. Now we zoom out to see many of them working together.
 
-<CacheCallout>Placeholder — to be written.</CacheCallout>
+## The residual stream
+
+Picture a vertical channel of data flowing upward through the model. At the bottom, the input embeddings enter. At the top, the final representations are used to predict the next token. At every layer in between, the same two operations run: **attention** (tokens look at each other) and an **FFN** (feed-forward network, a pair of matrix multiplications with a nonlinearity in between).
+
+Each operation produces an update, and that update is **added** to whatever was already flowing up the stream — this is the *residual connection*. The stream is never replaced; it accumulates small corrections from each layer. That additive design is what lets gradient signals flow cleanly during training and what allows later layers to build on, rather than overwrite, the work of earlier ones.
+
+## Stacked blocks
+
+Most large language models have dozens to nearly a hundred of these blocks — the exact count is one of the main axes of model scale. Each block is structurally identical: attention heads first, then FFN, both adding to the residual stream.
+
+The diagram below shows six layers (a simplified slice; real models have many more). Each box contains the same internal structure. Data enters from the bottom and emerges transformed at the top.
+
+<div class="layer-diagram" aria-label="Stacked transformer layer diagram">
+  <div class="layer-diagram__output">
+    ↑ output representation (to next token prediction)
+  </div>
+  <div class="layer-diagram__stack">
+    {[6, 5, 4, 3, 2, 1].map((n) => (
+      <div class="layer-diagram__row" key={n}>
+        <div class="layer-diagram__stream-seg" aria-hidden="true" />
+        <div class="layer-diagram__block">
+          <span class="layer-diagram__num">Layer {n}</span>
+          <span class="layer-diagram__attn">Attention</span>
+          <span class="layer-diagram__plus">+</span>
+          <span class="layer-diagram__ffn">FFN</span>
+        </div>
+      </div>
+    ))}
+  </div>
+  <div class="layer-diagram__input">
+    ↑ input embeddings (from Ch 2)
+  </div>
+  <p class="layer-diagram__caption">
+    Illustrative — six layers shown; real models typically have 32–96+.
+    The residual stream (left column) flows upward, accumulating small updates from each block.
+  </p>
+</div>
+
+<style>{`
+  .layer-diagram {
+    margin: var(--space-6) 0;
+    font-size: 0.875rem;
+    font-family: var(--font-body);
+  }
+  .layer-diagram__output,
+  .layer-diagram__input {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    font-style: italic;
+    padding: var(--space-2) 0;
+  }
+  .layer-diagram__stack {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .layer-diagram__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+  .layer-diagram__stream-seg {
+    width: 4px;
+    height: 52px;
+    background: var(--color-border);
+    border-radius: 2px;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .layer-diagram__stream-seg::after {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: 50%;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-accent);
+    transform: translateY(-50%);
+  }
+  .layer-diagram__block {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    border: 1.5px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-surface);
+  }
+  .layer-diagram__num {
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    min-width: 48px;
+    font-weight: 600;
+  }
+  .layer-diagram__attn {
+    padding: 2px 10px;
+    border-radius: 4px;
+    background: #eff6ff;
+    color: #1e40af;
+    border: 1px solid #bfdbfe;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .layer-diagram__ffn {
+    padding: 2px 10px;
+    border-radius: 4px;
+    background: #f0fdf4;
+    color: #166534;
+    border: 1px solid #bbf7d0;
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .layer-diagram__plus {
+    color: var(--color-muted);
+    font-weight: 700;
+  }
+  .layer-diagram__caption {
+    margin-top: var(--space-3);
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    font-style: italic;
+  }
+`}</style>
+
+## What do different layers actually learn?
+
+This is one of the most active and genuinely open research questions in mechanistic interpretability. It's tempting to say something like "early layers handle syntax, middle layers handle meaning, late layers handle task reasoning" — but that tidy story isn't well-supported by the evidence.
+
+What research does show: **different layers specialize in different ways**, and that specialization is real and measurable. Probing studies can identify information in some layers that isn't present in others. But the mapping from "layer number" to "role" is noisy, architecture-dependent, and often doesn't replicate cleanly across model families. Claims like "layer 5 handles grammar" are not a reliable description of how these models actually work.
+
+The interactive demo below lets you hover each layer to see a note. Every note is deliberately hedged — they describe what *some studies suggest* or what *layers like this tend to show*, not confident per-layer role assertions.
+
+<LayerStack client:load />
+
+## Why depth matters
+
+More layers give the model more opportunities to compose and refine its internal representations. In practice, depth (more layers) and width (larger hidden size) are both levers for model capacity — and both scale independently. A wider model has more dimensions in its residual stream; a deeper one has more transformation steps.
+
+This is also why training very deep networks was historically difficult: without residual connections, gradients would vanish before reaching early layers. The "add to the stream" design is what makes depth practical.
+
+<CacheCallout>
+  Every layer in the stack maintains its own **K and V matrices** for every token it processes. That means cache size scales with **layer count × token count × hidden size**. A 32-layer model caches 32 times as much K/V data per token as a single-layer model — and a 96-layer model caches three times that again. This is why the KV cache can be a significant fraction of total GPU memory at scale, and why understanding layers is prerequisite to understanding the cost and benefit of caching. Ch 6 goes inside the KV cache; Ch 7 shows how Claude Code turns that into a cross-request product feature.
+</CacheCallout>
