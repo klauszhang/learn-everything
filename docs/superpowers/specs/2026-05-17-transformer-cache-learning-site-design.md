@@ -32,75 +32,114 @@ After reading the site end-to-end, the reader can answer in their own words:
 - No real tokenizer or model inference. All example data is hand-authored.
 - No multi-language i18n, no mobile-first design, no accessibility audit (basic semantic HTML only), no analytics, no telemetry.
 - No dark mode for v1.
-- No build step, bundler, framework, or backend.
+- No backend.
 - No automated tests.
+- No Tailwind, no CSS-in-JS library, no component library (Radix, Headless UI, etc.) for v1 — plain CSS is enough for this surface area.
 
 ## Architecture
 
 ### Stack
 
-Vanilla HTML + CSS + JS. No framework, no build step, no server, no CDN. The site opens by double-clicking `index.html` and works fully offline.
+**Astro + React islands + MDX.**
+
+- **Astro** handles routing (file-based: one `.mdx` file per chapter), static-site generation, the layout/shell, and ships zero JS for purely static content.
+- **React** is used only inside interactive widgets (the "islands"). Components are written as `.tsx` files and dropped into MDX with the `client:load` (or `client:visible`) directive so they hydrate in the browser.
+- **MDX** is the authoring format for every chapter — markdown for prose, React components inline for diagrams and demos. This keeps chapter authoring fast and consistent without writing raw HTML.
+- **TypeScript** for React components.
+- **Dev experience:** `npm run dev` for hot-reloading dev server; `npm run build` produces a static `dist/` of plain HTML/JS that can be served by any static host or opened locally with a simple `npm run preview`.
+
+No Tailwind for v1 — plain CSS modules or a single global stylesheet keeps the surface small. Can reconsider if styling gets verbose.
 
 ### Diagrams
 
 Mixed strategy, no Mermaid:
 
-- **Inline SVG** for geometric diagrams: embedding scatter plot, attention matrix, KV-cache fill grid.
-- **HTML + CSS boxes** for flow / sequence diagrams: turn-by-turn re-read, layer stack, autoregressive append, prompt prefix structure.
-
-This keeps the site dependency-free and gives every diagram native hover/click interactivity.
+- **Inline SVG inside React components** for geometric diagrams: embedding scatter plot, attention matrix, KV-cache fill grid. SVG plays well with React's declarative rendering and lets diagrams react to component state (hover, click, step number).
+- **JSX + CSS** for flow / sequence diagrams: turn-by-turn re-read, layer stack, autoregressive append, prompt prefix structure. Just styled `<div>` elements with React handling state.
 
 ### File layout
 
 ```
 learn-claude-code/
-├── index.html              # Ch 0 — Why caching matters
-├── 01-tokens.html
-├── 02-embeddings.html
-├── 03-attention.html
-├── 04-layers.html
-├── 05-generation.html
-├── 06-kv-cache.html
-├── 07-prompt-cache.html
-├── assets/
-│   ├── styles.css          # shared styling
-│   ├── nav.js              # prev/next, sidebar TOC highlight, arrow-key nav
-│   └── data/               # hand-authored example data shared across chapters
-│       ├── tokens.js
-│       ├── embeddings.js
-│       ├── attention.js
-│       └── cache.js
+├── astro.config.mjs
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── pages/                       # Astro file-based routing
+│   │   ├── index.mdx                # Ch 0 — Why caching matters
+│   │   ├── 01-tokens.mdx
+│   │   ├── 02-embeddings.mdx
+│   │   ├── 03-attention.mdx
+│   │   ├── 04-layers.mdx
+│   │   ├── 05-generation.mdx
+│   │   ├── 06-kv-cache.mdx
+│   │   └── 07-prompt-cache.mdx
+│   ├── layouts/
+│   │   └── ChapterLayout.astro      # site shell, TOC sidebar, prev/next, arrow-key nav
+│   ├── components/                  # React islands (.tsx)
+│   │   ├── TokenChunks.tsx
+│   │   ├── EmbeddingScatter.tsx
+│   │   ├── AttentionMatrix.tsx
+│   │   ├── LayerStack.tsx
+│   │   ├── AutoregressiveStep.tsx
+│   │   ├── KVCacheGrid.tsx
+│   │   ├── RequestAnatomy.tsx
+│   │   └── CacheCallout.astro       # static callout, no JS
+│   ├── data/                        # hand-authored example data
+│   │   ├── tokens.ts
+│   │   ├── embeddings.ts
+│   │   ├── attention.ts
+│   │   └── cache.ts
+│   └── styles/
+│       └── global.css
+├── public/                          # static assets if any
 ├── docs/
 │   └── superpowers/
 │       └── specs/
 │           └── 2026-05-17-transformer-cache-learning-site-design.md
-└── README.md               # one-paragraph description + how to open
+└── README.md                        # how to run, what each chapter covers
 ```
 
-Each chapter loads the same `styles.css` and `nav.js` via relative paths.
+Each chapter's `.mdx` declares `layout: ../layouts/ChapterLayout.astro` in frontmatter; the layout renders the header, sidebar TOC, the chapter's MDX content, the "how this connects to the cache" callout slot, and prev/next nav at the bottom.
 
 ### Per-chapter template
 
-Every chapter HTML has the same skeleton:
+Every chapter MDX has the same shape:
 
-1. `<header>` — site title, sticky.
-2. `<aside>` — TOC sidebar listing all chapters; the current one is highlighted by `nav.js` based on `location.pathname`.
-3. `<main>` —
-   - `<h1>` chapter title
-   - One-line "what you'll learn"
-   - 2–4 short explanation paragraphs
-   - One core diagram (inline SVG or styled HTML)
-   - One small interactive demo (hover or click reveal — see below)
-   - A "How this connects to the cache" callout box at the bottom
-4. `<footer>` — prev/next chapter links.
+```mdx
+---
+layout: ../layouts/ChapterLayout.astro
+title: "Chapter N — Title"
+chapterNumber: N
+takeaway: "One-line what you'll learn."
+prev: "/previous-slug"
+next: "/next-slug"
+---
+
+import TokenChunks from '../components/TokenChunks.tsx';
+import CacheCallout from '../components/CacheCallout.astro';
+
+Short prose paragraph 1.
+
+Short prose paragraph 2.
+
+<TokenChunks client:load />
+
+More prose if needed.
+
+<CacheCallout>
+  How this connects to the cache: ...
+</CacheCallout>
+```
+
+The layout uses frontmatter (`title`, `chapterNumber`, `prev`, `next`) to render the header, sidebar highlight, and footer nav without per-chapter boilerplate.
 
 ### Interactivity model
 
-All interactivity is vanilla JS, no async.
-
-- `nav.js` (shared): highlights current chapter in TOC, wires up prev/next links, registers `ArrowLeft` / `ArrowRight` key handlers.
-- Per-page inline `<script>` blocks: hover/click reveals using `data-*` attributes. Hand-authored example data (tokens, mock attention weights, mock cache states) lives in `assets/data/*.js` as plain `<script>` includes that assign to globals — so consistent examples can be reused across chapters without duplication.
-- No `fetch`, no `import`, no module system.
+- **React islands** hydrate only the demo components. Each island manages its own state with `useState` (selected token, current step, hovered cell). No global state, no context.
+- **Example data** lives in `src/data/*.ts` as typed exports, imported by both components and (where needed) by MDX prose snippets.
+- **Keyboard navigation** (`ArrowLeft` / `ArrowRight` between chapters) is wired up once in `ChapterLayout.astro` via a tiny inline `<script>` — no React needed for that.
+- No `fetch`, no async, no real model. All demos render hand-authored data from `src/data/`.
 
 ### Visual style
 
@@ -186,12 +225,13 @@ The product-level details:
 
 ## Implementation order
 
-1. Skeleton: `assets/styles.css`, `assets/nav.js`, and one chapter (Ch 0) wired up end-to-end. Verify navigation, TOC highlight, callout styling, prev/next, arrow keys.
-2. Author the remaining 7 chapters in order (Ch 1 → Ch 7). Each chapter is small and isolated; can be done independently once the skeleton works.
-3. `README.md` describing how to open the site and what each chapter covers.
-4. Manual review: open each page in a browser, confirm diagrams render, interactions work, prev/next chain is intact, no console errors.
+1. **Project scaffold.** `npm create astro@latest` with the React + MDX integrations. Configure `astro.config.mjs`, add TypeScript paths, set up `src/styles/global.css`. Verify `npm run dev` serves a hello-world page.
+2. **Skeleton.** `ChapterLayout.astro` (header, sidebar TOC, prev/next, arrow-key nav), `CacheCallout.astro`, `src/data/*.ts` stubs, and Ch 0 (`index.mdx`) wired end-to-end. Verify in dev server: layout renders, TOC highlights the current chapter, prev/next chain works, arrow keys move between chapters.
+3. **Chapters 1–7.** Each chapter is independent of the others after the skeleton lands. Each one is: write the `.mdx` prose + frontmatter, build the one React island that chapter needs, populate `src/data/<topic>.ts`. These can be parallelized across subagents.
+4. **README.md** — how to run the site (`npm install`, `npm run dev`), what each chapter covers, and a short note on the non-goals.
+5. **Manual review.** Run `npm run build && npm run preview`, open each chapter, confirm diagrams render, all interactions work, prev/next chain is intact, no console errors, no broken imports.
 
-Chapters 1–7 are independent of each other after the skeleton lands and can be parallelized across subagents during implementation.
+Chapters 1–7 are intentionally independent — same layout, same data folder, separate components — so the implementation phase can fan out to one subagent per chapter.
 
 ## Risks and unresolved questions
 
