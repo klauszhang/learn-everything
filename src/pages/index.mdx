@@ -52,7 +52,7 @@ The shaded segments are identical across turns. That's a lot of work being re-do
 
 ## Prompt caching is the workaround
 
-Claude Code uses a feature called **prompt caching**. At certain points in the input, it marks a "cache breakpoint." When the next request arrives with the same prefix up to that breakpoint, the model skips re-processing that prefix and reuses the computation from the first time through.
+Claude Code uses a feature called **prompt caching**. Claude Code itself (not you) automatically marks "cache breakpoints" at stable points in the request. When the next request arrives with the same prefix up to one of those breakpoints, the model skips re-processing that prefix and reuses the computation from the first time through.
 
 The result: the system prompt, tool definitions, and any files that haven't changed are processed once and reused on every subsequent turn. Only your new message and the latest outputs actually get processed from scratch.
 

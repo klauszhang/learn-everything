@@ -22,9 +22,9 @@ The **prompt cache** is a different beast. It is a *product feature* — not an 
 
 Caching doesn't happen automatically for every token. Developers (or Claude Code itself) mark **cache breakpoints**: explicit signals saying "try to write a cache entry up to this point in the request." The API currently supports **up to 4 breakpoints per request**.
 
-On each request, the server looks for the longest matching cached prefix — the furthest breakpoint where the token sequence exactly matches a stored entry. Everything before that breakpoint is served from cache; everything after is processed fresh.
+On each request, the server looks for the longest matching cached prefix — the furthest breakpoint where the token sequence exactly matches a stored entry. Everything before that breakpoint is served from cache; everything after is processed fresh. The server also walks back a short distance (a "lookback window") from each breakpoint, so a near-match on the prefix can still yield a partial hit at an earlier position rather than nothing at all.
 
-**You do not manage breakpoints when using Claude Code.** Claude Code handles all of this internally — it places breakpoints at the right positions automatically. But understanding where those breakpoints go is exactly what tells you what will and won't be cached.
+**You do not manage breakpoints when using Claude Code.** Claude Code handles all of this internally — it places breakpoints at the right positions automatically. (Separately, Anthropic's API also does some **automatic caching** of long stable prefixes even when no explicit breakpoint is set; Claude Code's explicit breakpoints sit on top of that.) But understanding where those breakpoints go is exactly what tells you what will and won't be cached.
 
 ---
 
@@ -44,7 +44,7 @@ This matters more than it sounds:
 
 Cached entries expire. The default TTL is **5 minutes**. An extended **1-hour TTL** is also available.
 
-The 1-hour tier is not just "5-minute but better." It comes with a **higher cache-write price**. Writing a 1-hour entry costs more than writing a 5-minute one. The longer lifetime only becomes a net win when that entry will be read many times before it expires — if your turns are spaced far apart and the prefix is stable, the 1-hour tier pays off. If you pay the write premium and then the prefix changes before the next read, you've paid for nothing.
+**Both tiers charge a premium to *write* a cache entry** — writes always cost more per token than plain uncached input. The 1-hour tier carries a noticeably higher write premium than the 5-minute tier, in exchange for the longer lifetime. So the 1-hour tier is not just "5-minute but better": you pay extra up front for entries you intend to read back later. The longer lifetime only becomes a net win when that entry will be read many times before it expires — if your turns are spaced far apart and the prefix is stable, the 1-hour tier pays off. If you pay the write premium and then the prefix changes before the next read, you've paid for nothing.
 
 ---
 
@@ -52,10 +52,10 @@ The 1-hour tier is not just "5-minute but better." It comes with a **higher cach
 
 Prompt cache pricing follows a simple shape — qualitatively:
 
-- **Cache writes** cost *more* per token than plain uncached input.
+- **Cache writes** cost *more* per token than plain uncached input — for *both* tiers. The 1-hour tier costs noticeably more to write than the 5-minute tier.
 - **Cache reads** cost *much less* per token than uncached input.
 
-The math works because you pay the write premium once and then amortize it over every subsequent cache read. A prefix read many times relative to writes is a clear net win. A prefix read once or twice barely breaks even, depending on size.
+The math works because you pay the write premium once and then amortize it over every subsequent cache read. A prefix read many times relative to writes is a clear net win. A prefix read once or twice barely breaks even — and on the 1-hour tier with the higher write premium, it can be a net loss.
 
 Never treat caching as "free." The write always costs something, and avoiding that cost is why **keeping prefixes stable** is the real optimization.
 
@@ -180,7 +180,7 @@ Every Claude Code request is assembled from a predictable stack of segments. Cla
   <span><span class="bp-swatch"></span> Cache breakpoint (▼ BP)</span>
 </div>
 
-Segment heights are proportional to approximate token counts (illustrative). Three breakpoints follow the three stable segments. History and the new turn have no breakpoints and are always reprocessed fresh.
+Segment heights and the exact breakpoint placement shown here are **illustrative** — Claude Code manages its own breakpoints internally and Anthropic does not publicly document the exact segment layout. The shape to remember: breakpoints sit after the most stable segments (system prompt, tool definitions, read files), while history and the new turn have no breakpoints and are reprocessed fresh.
 
 ---
 
@@ -219,7 +219,7 @@ The cache gives no feedback when it's cold. If you're iterating rapidly on tool 
 Quick exchanges in an active session are the ideal use case. Long gaps between turns risk TTL expiry. If you're using the 1-hour tier, weigh the higher write cost against your actual read frequency.
 
 **5. Longer TTL does not mean free.**  
-The 1-hour tier costs more to write. Don't opt in unless your session spans more than a few minutes and the prefix is genuinely stable.
+Both tiers charge a write premium above uncached input; the 1-hour tier charges noticeably more than the 5-minute one. Don't opt in to 1-hour unless your session spans more than a few minutes and the prefix is genuinely stable.
 
 <CacheCallout>
 The prompt cache is the payoff for everything you've learned. The KV cache (Ch 6) saves work inside one generation; the prompt cache saves work across separate requests. Claude Code structures every request so the stable parts — system prompt, tool definitions, read files — come first with breakpoints, and only your new message and the latest tool outputs are ever reprocessed. Keeping your system prompt and tool definitions stable, and loading large reference files early, is all it takes to let the cache do its job. A single silent invalidator — an edited tool description, a reworded system prompt — breaks the match and forces a full reprocess. No warning, just cost.

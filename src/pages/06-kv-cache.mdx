@@ -48,5 +48,5 @@ It also does not change *what* the model computes, only *when*. The output of a 
 <CacheCallout>
   The KV cache is the **engine** — the intra-request optimization that makes long-context decoding tractable. It stores K and V for every past token in runtime memory, lives for exactly one generation, and is freed when the request ends.
 
-  Ch 7 takes the same core idea — "don't redo work on the prefix" — and turns it into a **product feature** that persists across *separate* API requests. Same intuition, completely different mechanism: different scope (cross-request, not intra-request), different lifetime (5 minutes to 1 hour, not one generation), different invalidation rules, and a different pricing model. Understanding the KV cache makes the prompt cache less mysterious — but don't confuse the two.
+  Ch 7 takes the same core idea — "don't redo work on the prefix" — and turns it into a **product feature** that persists across *separate* API requests. Same intuition, completely different mechanism: different scope (cross-request, not intra-request), different lifetime (one of two discrete tiers — 5 minutes or 1 hour — not the duration of one generation), different invalidation rules, and a different pricing model. Understanding the KV cache makes the prompt cache less mysterious — but don't confuse the two.
 </CacheCallout>

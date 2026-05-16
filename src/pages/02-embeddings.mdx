@@ -93,9 +93,9 @@ Hover any point to inspect its (truncated, 6-dimensional) vector and its nearest
 <EmbeddingScatter client:visible />
 
 <CacheCallout>
-  **Same token ID → same embedding-layer vector, always.** The embedding lookup is a pure table read: no context, no history, no randomness. Token 4721 always retrieves the same row. This is the deterministic foundation that makes prefix caching possible at the API level — the embedding pass over a stable prefix will produce the same activations every time.
+  **Same token ID → same embedding-layer vector, always.** The embedding lookup is a pure table read: no context, no history, no randomness. Token 4721 always retrieves the same row. This determinism — at the embedding layer *and* at every layer above it, when the prefix is held fixed — is the foundation that makes prefix caching possible at the API level.
 
-  **After layer 1, that determinism ends.** Attention mixes each token's representation with every other token in the sequence. From layer 1 onward, what the model "thinks about" a token depends on its neighbors. So when we talk about what the prompt cache actually stores and reuses, we mean the result of processing a specific sequence of tokens together — not some fixed, context-free representation of each word. What stays cacheable is the work that depends only on the prefix tokens, not "the model's view of a word" in isolation.
+  **After layer 1, the representation is context-dependent.** Attention mixes each token's representation with every other token in the sequence. From layer 1 onward, what the model "thinks about" a token depends on its neighbors. The prompt cache doesn't store embeddings — it stores the **per-layer K and V tensors** computed for a specific sequence of tokens together (you'll see this in Ch 6). What stays cacheable is the work that depends only on the prefix tokens, not "the model's view of a word" in isolation.
 </CacheCallout>
 
 <style>{`
