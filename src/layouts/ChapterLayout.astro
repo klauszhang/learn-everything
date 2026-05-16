@@ -1,0 +1,256 @@
+---
+import '../styles/global.css';
+
+const { title, chapterNumber, takeaway, prev, next } = Astro.props;
+const { frontmatter } = Astro.props;
+
+// Support both direct props (from Astro pages) and frontmatter (from MDX)
+const _title = title ?? frontmatter?.title;
+const _chapterNumber = chapterNumber ?? frontmatter?.chapterNumber;
+const _takeaway = takeaway ?? frontmatter?.takeaway;
+const _prev = prev ?? frontmatter?.prev;
+const _next = next ?? frontmatter?.next;
+
+const chapters = [
+  { number: 0, slug: '/', label: 'Ch 0 — Why caching matters' },
+  { number: 1, slug: '/01-tokens', label: 'Ch 1 — Tokens' },
+  { number: 2, slug: '/02-embeddings', label: 'Ch 2 — Embeddings' },
+  { number: 3, slug: '/03-attention', label: 'Ch 3 — Attention' },
+  { number: 4, slug: '/04-layers', label: 'Ch 4 — Layers' },
+  { number: 5, slug: '/05-generation', label: 'Ch 5 — Generation' },
+  { number: 6, slug: '/06-kv-cache', label: 'Ch 6 — KV Cache' },
+  { number: 7, slug: '/07-prompt-cache', label: 'Ch 7 — Prompt Cache' },
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{_title} — Learn Claude Code</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="site-title" href="/">Learn Claude Code</a>
+      <span class="chapter-title">{_title}</span>
+    </header>
+
+    <div class="page-shell">
+      <nav class="sidebar" aria-label="Chapter navigation">
+        <ul class="toc-list">
+          {chapters.map((ch) => (
+            <li class={`toc-item${ch.number === _chapterNumber ? ' toc-item--active' : ''}`}>
+              <a href={ch.slug}>{ch.label}</a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+
+      <main class="chapter-body" id="main-content">
+        {_takeaway && (
+          <p class="chapter-takeaway">{_takeaway}</p>
+        )}
+        <slot />
+        <footer class="chapter-footer">
+          <div class="prev-next">
+            {_prev ? (
+              <a class="prev-link" href={_prev}>← Previous</a>
+            ) : (
+              <span class="prev-link prev-link--disabled"></span>
+            )}
+            {_next ? (
+              <a class="next-link" href={_next}>Next →</a>
+            ) : (
+              <span class="next-link next-link--disabled"></span>
+            )}
+          </div>
+        </footer>
+      </main>
+    </div>
+
+    <script define:vars={{ prevUrl: _prev ?? '', nextUrl: _next ?? '' }}>
+      document.addEventListener('keydown', function(e) {
+        // Ignore if focus is in an input or textarea
+        if (
+          e.target instanceof HTMLInputElement ||
+          e.target instanceof HTMLTextAreaElement ||
+          e.target.isContentEditable
+        ) return;
+        // Ignore if any modifier key is held
+        if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+
+        if (e.key === 'ArrowLeft' && prevUrl) {
+          window.location.href = prevUrl;
+        } else if (e.key === 'ArrowRight' && nextUrl) {
+          window.location.href = nextUrl;
+        }
+      });
+    </script>
+  </body>
+</html>
+
+<style>
+  /* Header */
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    padding: var(--space-3) var(--space-6);
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .site-title {
+    font-weight: 700;
+    color: var(--color-text);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .chapter-title {
+    color: var(--color-muted);
+    font-size: 0.9rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Page shell: sidebar + main */
+  .page-shell {
+    display: flex;
+    min-height: calc(100vh - 49px);
+  }
+
+  /* Sidebar */
+  .sidebar {
+    width: var(--sidebar-width);
+    flex-shrink: 0;
+    border-right: 1px solid var(--color-border);
+    padding: var(--space-6) var(--space-4);
+    position: sticky;
+    top: 49px;
+    height: calc(100vh - 49px);
+    overflow-y: auto;
+  }
+
+  .toc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .toc-item a {
+    display: block;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius);
+    font-size: 0.85rem;
+    color: var(--color-text);
+    text-decoration: none;
+    line-height: 1.4;
+  }
+
+  .toc-item a:hover {
+    background: var(--color-surface);
+  }
+
+  .toc-item--active a {
+    background: var(--color-accent-soft);
+    color: var(--color-accent);
+    font-weight: 600;
+  }
+
+  /* Chapter body */
+  .chapter-body {
+    flex: 1;
+    min-width: 0;
+    padding: var(--space-8) var(--space-6);
+  }
+
+  .chapter-body > :global(*) {
+    max-width: var(--content-max);
+  }
+
+  .chapter-takeaway {
+    background: var(--color-surface);
+    border-left: 3px solid var(--color-accent);
+    padding: var(--space-3) var(--space-4);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    font-style: italic;
+    color: var(--color-muted);
+    margin-bottom: var(--space-6);
+    max-width: var(--content-max);
+  }
+
+  /* Footer prev/next */
+  .chapter-footer {
+    margin-top: var(--space-8);
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--color-border);
+    max-width: var(--content-max);
+  }
+
+  .prev-next {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .prev-link,
+  .next-link {
+    display: inline-block;
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 0.9rem;
+    color: var(--color-accent);
+    text-decoration: none;
+    min-width: 80px;
+  }
+
+  .prev-link:hover,
+  .next-link:hover {
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
+  }
+
+  .prev-link--disabled,
+  .next-link--disabled {
+    border: none;
+    color: transparent;
+    pointer-events: none;
+  }
+
+  /* Responsive: narrow viewports collapse sidebar above content */
+  @media (max-width: 1023px) {
+    .page-shell {
+      flex-direction: column;
+    }
+
+    .sidebar {
+      width: 100%;
+      height: auto;
+      position: static;
+      border-right: none;
+      border-bottom: 1px solid var(--color-border);
+      padding: var(--space-3) var(--space-4);
+    }
+
+    .toc-list {
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: var(--space-2);
+    }
+
+    .toc-item a {
+      padding: var(--space-1) var(--space-2);
+      font-size: 0.8rem;
+    }
+  }
+</style>
