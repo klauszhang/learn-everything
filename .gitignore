@@ -1,8 +1,10 @@
 node_modules/
 dist/
 .astro/
+tasks
 tasks/
 .worktrees/
+.worktrees
 
 # OS / editor
 .DS_Store
