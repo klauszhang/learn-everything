@@ -26,7 +26,7 @@ Generation actually has two distinct phases, and they behave very differently in
 
 **Prefill** is the first pass. The model takes the complete prompt — all of its tokens at once — and runs it through every layer in a single forward pass. This is efficient because all prompt tokens are known upfront and can be processed in parallel. Prefill produces the model's first predicted token, and it also computes a set of internal values (the K and V matrices you saw in Ch 3) for every prompt token at every layer.
 
-**Decode** is everything that comes after. Once the first generated token exists, it gets appended to the sequence, and the model runs another forward pass — but now to predict just the second token. Then a third pass for the third token. Each decode step processes the entire sequence from scratch: prompt tokens plus all generated tokens so far.
+**Decode** is everything that comes after. Once the first generated token exists, it gets appended to the sequence, and the model runs another forward pass — but now to predict just the second token. Then a third pass for the third token. *Without any optimization*, each decode step would re-process the entire sequence from scratch — prompt tokens plus all generated tokens so far — through every layer. In practice the model uses a **KV cache** to skip the redundant work; that's exactly what Ch 6 is about.
 
 Here is the critical asymmetry: **prefill runs once; decode runs once per generated token.** A 10-token prompt followed by a 50-token response means 1 prefill pass and 50 decode passes — and each decode pass re-reads those same 10 prompt tokens.
 
