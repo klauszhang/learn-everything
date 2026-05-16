@@ -46,7 +46,8 @@ After reading the site end-to-end, the reader can answer in their own words:
 - **React** is used only inside interactive widgets (the "islands"). Components are written as `.tsx` files and dropped into MDX with the `client:load` (or `client:visible`) directive so they hydrate in the browser.
 - **MDX** is the authoring format for every chapter — markdown for prose, React components inline for diagrams and demos. This keeps chapter authoring fast and consistent without writing raw HTML.
 - **TypeScript** for React components.
-- **Dev experience:** `npm run dev` for hot-reloading dev server; `npm run build` produces a static `dist/` of plain HTML/JS that can be served by any static host or opened locally with a simple `npm run preview`.
+- **Bun** is the package manager and script runner — `bun install`, `bun add`, `bun run dev`, `bun run build`. Lockfile is `bun.lockb`. No npm, yarn, or pnpm in this project.
+- **Dev experience:** `bun run dev` for hot-reloading dev server; `bun run build` produces a static `dist/` of plain HTML/JS that can be served by any static host or opened locally with `bun run preview`.
 
 No Tailwind for v1 — plain CSS modules or a single global stylesheet keeps the surface small. Can reconsider if styling gets verbose.
 
@@ -225,11 +226,11 @@ The product-level details:
 
 ## Implementation order
 
-1. **Project scaffold.** `npm create astro@latest` with the React + MDX integrations. Configure `astro.config.mjs`, add TypeScript paths, set up `src/styles/global.css`. Verify `npm run dev` serves a hello-world page.
+1. **Project scaffold.** `bunx create-astro@latest` with the React + MDX integrations. Use Bun for the install step (`bun install`). Configure `astro.config.mjs`, add TypeScript paths, set up `src/styles/global.css`. Verify `bun run dev` serves a hello-world page.
 2. **Skeleton.** `ChapterLayout.astro` (header, sidebar TOC, prev/next, arrow-key nav), `CacheCallout.astro`, `src/data/*.ts` stubs, and Ch 0 (`index.mdx`) wired end-to-end. Verify in dev server: layout renders, TOC highlights the current chapter, prev/next chain works, arrow keys move between chapters.
 3. **Chapters 1–7.** Each chapter is independent of the others after the skeleton lands. Each one is: write the `.mdx` prose + frontmatter, build the one React island that chapter needs, populate `src/data/<topic>.ts`. These can be parallelized across subagents.
-4. **README.md** — how to run the site (`npm install`, `npm run dev`), what each chapter covers, and a short note on the non-goals.
-5. **Manual review.** Run `npm run build && npm run preview`, open each chapter, confirm diagrams render, all interactions work, prev/next chain is intact, no console errors, no broken imports.
+4. **README.md** — how to run the site (`bun install`, `bun run dev`), what each chapter covers, and a short note on the non-goals.
+5. **Manual review.** Run `bun run build && bun run preview`, open each chapter, confirm diagrams render, all interactions work, prev/next chain is intact, no console errors, no broken imports.
 
 Chapters 1–7 are intentionally independent — same layout, same data folder, separate components — so the implementation phase can fan out to one subagent per chapter.
 
