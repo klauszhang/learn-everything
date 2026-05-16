@@ -64,7 +64,12 @@ learn-claude-code/
 ├── 07-prompt-cache.html
 ├── assets/
 │   ├── styles.css          # shared styling
-│   └── nav.js              # prev/next, sidebar TOC highlight, arrow-key nav
+│   ├── nav.js              # prev/next, sidebar TOC highlight, arrow-key nav
+│   └── data/               # hand-authored example data shared across chapters
+│       ├── tokens.js
+│       ├── embeddings.js
+│       ├── attention.js
+│       └── cache.js
 ├── docs/
 │   └── superpowers/
 │       └── specs/
@@ -94,7 +99,7 @@ Every chapter HTML has the same skeleton:
 All interactivity is vanilla JS, no async.
 
 - `nav.js` (shared): highlights current chapter in TOC, wires up prev/next links, registers `ArrowLeft` / `ArrowRight` key handlers.
-- Per-page inline `<script>` blocks: hover/click reveals using `data-*` attributes and small hand-authored JS arrays of example data (tokens, mock attention weights, mock cache states).
+- Per-page inline `<script>` blocks: hover/click reveals using `data-*` attributes. Hand-authored example data (tokens, mock attention weights, mock cache states) lives in `assets/data/*.js` as plain `<script>` includes that assign to globals — so consistent examples can be reused across chapters without duplication.
 - No `fetch`, no `import`, no module system.
 
 ### Visual style
@@ -116,7 +121,7 @@ All interactivity is vanilla JS, no async.
 
 ### Ch 1 — Tokens (`01-tokens.html`)
 
-Text gets chopped into tokens (≈word-pieces). The model never sees individual characters.
+Text gets chopped into tokens (≈word-pieces). The model never sees individual characters. One-sentence preview of byte-pair / subword tokenization: common chunks ("the", "ing") get their own token; rare words get split into pieces. This makes the `antidisestablishmentarianism` split feel motivated rather than arbitrary.
 
 - **Diagram:** a sentence broken into colored token boxes (HTML/CSS).
 - **Demo:** switch between 3 pre-tokenized examples ("hello world", "Hello world!", "antidisestablishmentarianism") to see how casing, punctuation, and word length change the chunks.
@@ -128,7 +133,7 @@ Each token ID maps to a fixed vector. Similar meanings sit near each other.
 
 - **Diagram:** SVG 2D scatter plot — king/queen/man/woman style cluster with a few other points for variety.
 - **Demo:** hover a token in the scatter or in a sentence to see its (truncated) vector and nearest neighbors.
-- **Cache callout:** the same token ID always maps to the same vector — deterministic-per-token is what makes the prefix reusable across turns.
+- **Cache callout:** the same token ID always maps to the same *embedding-layer* vector — deterministic at the input. Important caveat to land here: after layer 1, the representation of a token becomes context-dependent (it has attended to its neighbors). What stays cacheable is the work that depends only on the prefix tokens, not "the model's view of a word."
 
 ### Ch 3 — Attention (`03-attention.html`)
 
@@ -136,14 +141,14 @@ Each token "looks at" earlier tokens. Q/K/V intuition: Q = what I'm looking for;
 
 - **Diagram:** SVG attention matrix grid — one row per query token, one column per key token, cell shading = mock attention weight.
 - **Demo:** click a token in a sentence to highlight the row of the matrix and which earlier tokens it attends to.
-- **Cache callout:** K and V for past tokens never change as you generate more — that's exactly what gets cached.
+- **Cache callout:** K and V are *layer-specific* — each layer computes its own K and V from that layer's inputs. They are not a fixed property of a token. What *is* true: during one generation pass, once a token has been processed at layer L, that layer's K and V for that token won't change as you generate later tokens. That's the property the KV cache exploits (Ch 6).
 
 ### Ch 4 — Layers (`04-layers.html`)
 
 Real transformers stack many attention + FFN blocks. Residual stream is the data flowing up the stack.
 
 - **Diagram:** stacked layer boxes (HTML/CSS) showing residual stream flowing from input embeddings up through layers to the output.
-- **Demo:** hover a layer for a toy one-sentence description of what it might learn (e.g., low layers = syntax-ish, mid = semantic, high = task-ish). Explicitly framed as a rough intuition, not literal truth.
+- **Demo:** hover a layer for a one-sentence note that different layers learn different kinds of patterns. Avoid claiming a specific "low = syntax, mid = semantic, high = task" taxonomy — that's contested in the literature. Frame it as "research shows layers specialize in different ways, but the mapping isn't tidy."
 - **Cache callout:** every layer has its own K and V — total cache size scales with layer count × tokens × hidden size.
 
 ### Ch 5 — Generation (`05-generation.html`)
@@ -164,18 +169,20 @@ Store K and V vectors for every past token. At each decode step, only compute K/
 
 ### Ch 7 — Claude Code prompt cache (`07-prompt-cache.html`)
 
-The product-level feature:
+**Bridge from Ch 6 (first thing in the chapter):** the KV cache from Ch 6 is an *intra-request* optimization that lives in the model's runtime memory during one generation. The prompt cache is a different beast: a *product feature* that persists prefix state across separate API requests, with its own lifetime, pricing, and invalidation rules. Same underlying idea ("don't redo work on the prefix"), different mechanism and different scope.
 
-- Cache breakpoints (developer-marked prefixes).
-- What counts as a hit (exact token-level prefix match).
-- TTL: 5 minutes default, 1 hour extended.
-- Pricing: cache writes cost more than uncached input; cache reads cost much less. Net win when prefix is read more times than it's written.
-- What invalidates: any change anywhere in the cached prefix.
-- How Claude Code uses it: system prompt + tools + read files + history are all cached; only the user's new message and new tool outputs are uncached.
+The product-level details:
+
+- **Cache breakpoints.** Developer-marked points in the prompt that say "try to write a cache entry up to here." Anthropic's API currently allows up to 4 breakpoints per request. The system caches *up to and including* each breakpoint; on read, the longest matching cached prefix wins. **Claude Code manages its own breakpoints internally** — the end-user reading this site does not place them by hand; the chapter explains them so the reader can reason about cache behavior, not to teach them an API.
+- **What counts as a hit.** Exact token-level prefix match up to a breakpoint.
+- **TTL.** Two options: 5-minute default and 1-hour extended. The 1-hour option has a *higher cache-write price* in exchange for the longer lifetime — so it's only a net win when reads are spaced out over many minutes.
+- **Pricing direction (qualitative).** Cache writes cost more than uncached input; cache reads cost much less than uncached input. Net win when a prefix is read many times relative to how often it's written. The 1-hour tier shifts this balance — the write is even more expensive, the read is the same discount, but you get more time to amortize.
+- **What invalidates.** Any change anywhere in the cached prefix. Notably surprising sources of invalidation: changes to the **system prompt**, the **tool definitions**, or the **order** of cached segments — even if the visible conversation hasn't changed.
+- **How Claude Code uses it.** System prompt + tool definitions + read files + history are all part of the cached prefix; only the user's new message and the latest tool outputs are uncached on each turn.
 
 - **Diagram:** anatomy of a Claude Code request — labeled, colored segments (system prompt, tools, files, history, new turn) with cache breakpoint markers (HTML/CSS).
-- **Demo:** two consecutive requests side-by-side; hover segments to see "hit" vs "miss". Toggle: edit something in the early prefix → watch the whole cache go cold.
-- **Practical takeaways:** keep stable content early, mutable content late; avoid small edits to early text; cache TTL is short, so back-to-back turns benefit most.
+- **Demo:** two consecutive requests side-by-side; hover segments to see "hit" vs "miss". Toggle: edit something in the early prefix (or change a tool definition) → watch the whole cache go cold.
+- **Practical takeaways:** keep stable content early, mutable content late; avoid small edits to early text; tool/system-prompt churn silently nukes the cache; 5-minute TTL means back-to-back turns benefit most, longer pauses lose the cache unless you pay for the 1-hour tier.
 
 ## Implementation order
 
@@ -188,6 +195,9 @@ Chapters 1–7 are independent of each other after the skeleton lands and can be
 
 ## Risks and unresolved questions
 
-- **Pedagogical accuracy.** "How this connects to the cache" callouts must stay honest — e.g., the layer-role intuitions in Ch 4 are not literally true; we frame them as rough intuition. Worth a sanity pass during review to make sure no claim is misleading.
-- **TTL / pricing details.** Ch 7 cites "5-min default, 1-hour extended" and "cache writes cost more, reads cost less." These are accurate as of Anthropic's published prompt-caching docs; the spec deliberately keeps numbers qualitative so the site doesn't go stale on a price tweak.
-- **Hand-authored data quality.** All example attention weights / embeddings / cache states are fake. The risk is that a fake example accidentally implies something untrue (e.g., an "attention pattern" that wouldn't actually occur). Mitigation: keep demos simple and labeled as illustrative.
+- **Pedagogical accuracy.** "How this connects to the cache" callouts must stay honest. The Ch 4 hover note deliberately avoids a "low = syntax, mid = semantic, high = task" taxonomy because that mapping is contested. Reviewer should sanity-check that no other claim across chapters is over-stated.
+- **TTL / pricing details.** Ch 7 cites "5-min default, 1-hour extended" plus a qualitative pricing direction. Spec deliberately keeps numbers qualitative so the page doesn't go stale on a price change. The 1-hour tier's *higher* write multiplier is called out so readers don't think "longer TTL is free."
+- **Hand-authored data quality.** All attention weights, embeddings, and cache states in the demos are fabricated. Risk: a fake example accidentally implies something untrue (e.g., an attention pattern that wouldn't actually occur). Mitigation: label demos as illustrative; keep them simple.
+- **Embedding determinism nuance.** Ch 2's "same token → same vector" is true *at the embedding layer*. Post-layer-1 representations are context-dependent. The Ch 2 callout now states this explicitly so readers don't carry away the wrong intuition into Ch 3 and Ch 6.
+- **Silent cache invalidators in Claude Code.** Tool definitions and system-prompt changes can invalidate the cache even when the visible conversation hasn't changed. This often surprises users. Ch 7 calls it out explicitly in both the prose and the demo (toggling a tool definition blows the cache cold).
+- **Ch 6 → Ch 7 conceptual handoff.** The leap from "intra-request KV cache" to "inter-request product feature" is the whole point of the site. The spec now opens Ch 7 with an explicit bridge paragraph; reviewer should check it lands.
