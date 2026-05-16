@@ -7,8 +7,103 @@ prev: "/01-tokens"
 next: "/03-attention"
 ---
 
+import EmbeddingScatter from '../components/EmbeddingScatter.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-Chapter content coming soon.
+The model never operates on raw text. After tokenization, each token is just a number — an ID from the vocabulary. The first thing the model does is look that ID up in a large table and retrieve a fixed vector of numbers called an **embedding**. That vector is the model's starting representation of the token.
 
-<CacheCallout>Placeholder — to be written.</CacheCallout>
+Because the embedding table is fixed after training, the same token ID always returns the same vector. Token 4721 (`"king"`) maps to exactly the same 12,288 numbers every single time, regardless of what text surrounds it. This is the **embedding layer's determinism**: one token in, one fixed vector out.
+
+## Meaning lives in geometry
+
+Embeddings aren't arbitrary. During training, the model adjusts the table so that tokens with similar meanings end up with similar vectors — meaning their coordinates sit close together in the high-dimensional space. You can visualize this in two dimensions: royalty words cluster near each other, animal words cluster elsewhere, and so on. This geometric structure is where linguistic relationships are encoded.
+
+The diagram below compresses those high-dimensional relationships into 2D. Real embedding spaces have thousands of dimensions, but the clustering intuition holds.
+
+{/* Inline SVG — static illustration of semantic clusters */}
+<svg
+  viewBox="0 0 480 320"
+  width="480"
+  height="320"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-label="Illustrative 2D embedding scatter: royalty, gender, animal, and science word clusters"
+  style={{ display: "block", maxWidth: "100%", margin: "1.5rem 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface)" }}
+>
+  {/* ── Cluster outlines ─────────────────────────────── */}
+  <ellipse cx="100" cy="90"  rx="58" ry="38" fill="#6366f1" opacity="0.08" />
+  <ellipse cx="200" cy="185" rx="44" ry="30" fill="#10b981" opacity="0.08" />
+  <ellipse cx="375" cy="85"  rx="55" ry="36" fill="#f97316" opacity="0.08" />
+  <ellipse cx="375" cy="250" rx="55" ry="34" fill="#8b5cf6" opacity="0.08" />
+
+  {/* ── Cluster labels ───────────────────────────────── */}
+  <text x="100" y="44"  textAnchor="middle" fontSize="11" fill="#6366f1" opacity="0.7" fontFamily="system-ui,sans-serif">royalty</text>
+  <text x="200" y="148" textAnchor="middle" fontSize="11" fill="#10b981" opacity="0.7" fontFamily="system-ui,sans-serif">gender</text>
+  <text x="375" y="40"  textAnchor="middle" fontSize="11" fill="#f97316" opacity="0.7" fontFamily="system-ui,sans-serif">animal</text>
+  <text x="375" y="208" textAnchor="middle" fontSize="11" fill="#8b5cf6" opacity="0.7" fontFamily="system-ui,sans-serif">science</text>
+
+  {/* ── Royalty cluster ──────────────────────────────── */}
+  <circle cx="72"  cy="88" r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="72"  y="76"  textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">king</text>
+
+  <circle cx="108" cy="100" r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="108" y="88"   textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">queen</text>
+
+  <circle cx="130" cy="78"  r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="130" y="66"   textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">prince</text>
+
+  {/* ── Gender cluster ───────────────────────────────── */}
+  <circle cx="182" cy="190" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="182" y="178"  textAnchor="middle" fontSize="12" fill="#065f46" fontFamily="system-ui,sans-serif">man</text>
+
+  <circle cx="218" cy="178" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="218" y="166"  textAnchor="middle" fontSize="12" fill="#065f46" fontFamily="system-ui,sans-serif">woman</text>
+
+  {/* ── Animal cluster ───────────────────────────────── */}
+  <circle cx="348" cy="88" r="7" fill="#f97316" opacity="0.85" />
+  <text   x="348" y="76"  textAnchor="middle" fontSize="12" fill="#9a3412" fontFamily="system-ui,sans-serif">cat</text>
+
+  <circle cx="400" cy="96" r="7" fill="#f97316" opacity="0.85" />
+  <text   x="400" y="84"  textAnchor="middle" fontSize="12" fill="#9a3412" fontFamily="system-ui,sans-serif">dog</text>
+
+  {/* ── Science cluster ──────────────────────────────── */}
+  <circle cx="352" cy="252" r="7" fill="#8b5cf6" opacity="0.85" />
+  <text   x="352" y="240" textAnchor="middle" fontSize="12" fill="#4c1d95" fontFamily="system-ui,sans-serif">atom</text>
+
+  <circle cx="398" cy="244" r="7" fill="#8b5cf6" opacity="0.85" />
+  <text   x="398" y="232" textAnchor="middle" fontSize="12" fill="#4c1d95" fontFamily="system-ui,sans-serif">gravity</text>
+
+  {/* ── Solo token ───────────────────────────────────── */}
+  <circle cx="240" cy="272" r="7" fill="#6b7280" opacity="0.75" />
+  <text   x="240" y="260" textAnchor="middle" fontSize="12" fill="#374151" fontFamily="system-ui,sans-serif">one</text>
+
+  {/* ── Illustrative note ────────────────────────────── */}
+  <text x="8" y="314" fontSize="9" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — 2D projection of a high-dimensional embedding space. Not real model output.</text>
+</svg>
+
+## An important boundary: the embedding layer vs. later layers
+
+Here is the nuance that matters most for the rest of this course: **the "same token → same vector" rule applies only at the embedding layer.** The moment the embedding enters the first attention layer, it gets mixed with the representations of other tokens in the sequence. From that point on, the representation of any token is *context-dependent* — "bank" in "river bank" produces a different internal vector after layer 1 than "bank" in "savings bank," even though both started from the same embedding.
+
+This distinction matters because it defines exactly what is and isn't predictable about the model's internal state before inference begins.
+
+## Interactive demo
+
+Hover any point to inspect its (truncated, 6-dimensional) vector and its nearest neighbors. Notice how vectors for semantically similar tokens share similar magnitudes in similar positions.
+
+<EmbeddingScatter client:visible />
+
+<CacheCallout>
+  **Same token ID → same embedding-layer vector, always.** The embedding lookup is a pure table read: no context, no history, no randomness. Token 4721 always retrieves the same row. This is the deterministic foundation that makes prefix caching possible at the API level — the embedding pass over a stable prefix will produce the same activations every time.
+
+  **After layer 1, that determinism ends.** Attention mixes each token's representation with every other token in the sequence. From layer 1 onward, what the model "thinks about" a token depends on its neighbors. So when we talk about what the prompt cache actually stores and reuses, we mean the result of processing a specific sequence of tokens together — not some fixed, context-free representation of each word. What stays cacheable is the work that depends only on the prefix tokens, not "the model's view of a word" in isolation.
+</CacheCallout>
+
+<style>{`
+  /* Chapter-specific styles for 02-embeddings.mdx */
+  .embed-note {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    font-style: italic;
+    margin-top: 0.25rem;
+  }
+`}</style>
