@@ -1,0 +1,43 @@
+---
+// CacheCallout.astro — static, no JS.
+// Use at the end of every chapter for the "How this connects to the cache" section.
+// Styled with --color-cache (amber) and --color-cache-soft from global.css.
+---
+
+<aside class="cache-callout">
+  <div class="cache-callout__label">How this connects to the cache</div>
+  <div class="cache-callout__body">
+    <slot />
+  </div>
+</aside>
+
+<style>
+  .cache-callout {
+    background: var(--color-cache-soft);
+    border: 1px solid var(--color-cache);
+    border-left-width: 4px;
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-6);
+    margin-top: var(--space-8);
+    max-width: var(--content-max);
+  }
+
+  .cache-callout__label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #92400e; /* amber-800 for contrast on soft amber bg */
+    margin-bottom: var(--space-2);
+  }
+
+  .cache-callout__body {
+    font-size: 0.95rem;
+    line-height: 1.65;
+    color: var(--color-text);
+  }
+
+  .cache-callout__body :global(p:last-child) {
+    margin-bottom: 0;
+  }
+</style>
