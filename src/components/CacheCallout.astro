@@ -8,12 +8,12 @@
 //   <CacheCallout>…slot content…</CacheCallout>
 //   <CacheCallout label="Custom label">…slot content…</CacheCallout>
 //
-// The default label is "Chapter takeaway" so extension chapters don't
-// force a cache angle. Part I chapters that reference the cache are
-// free to pass label="How this connects to the cache" explicitly, or
-// rely on the neutral default — either reads naturally.
+// The default label preserves Part I's "How this connects to the cache"
+// wording so existing chapters keep their original presentation. Part II
+// (extension) chapters pass an explicit override, e.g.
+// label="Chapter takeaway", since they don't all have a cache angle.
 
-const { label = 'Chapter takeaway' } = Astro.props;
+const { label = 'How this connects to the cache' } = Astro.props;
 ---
 
 <aside class="cache-callout">
