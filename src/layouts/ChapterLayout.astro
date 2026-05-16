@@ -11,7 +11,8 @@ const _takeaway = takeaway ?? frontmatter?.takeaway;
 const _prev = prev ?? frontmatter?.prev;
 const _next = next ?? frontmatter?.next;
 
-const chapters = [
+// Part I: numbered chapters (0–7)
+const partOneChapters = [
   { number: 0, slug: '/', label: 'Ch 0 — Why caching matters' },
   { number: 1, slug: '/01-tokens', label: 'Ch 1 — Tokens' },
   { number: 2, slug: '/02-embeddings', label: 'Ch 2 — Embeddings' },
@@ -21,6 +22,17 @@ const chapters = [
   { number: 6, slug: '/06-kv-cache', label: 'Ch 6 — KV Cache' },
   { number: 7, slug: '/07-prompt-cache', label: 'Ch 7 — Prompt Cache' },
 ];
+
+// Part II: extension chapters (named, not numbered — chapterNumber is null/absent)
+const partTwoChapters = [
+  { slug: '/vector-search', label: 'Vector search' },
+  { slug: '/rag', label: 'RAG' },
+];
+
+// Determine current path for Part II highlighting (chapterNumber is null for these pages)
+const rawPath = Astro.url.pathname;
+// Normalize trailing slash: '/' stays '/', others strip trailing slash
+const currentPath = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
 ---
 
 <!doctype html>
@@ -38,9 +50,19 @@ const chapters = [
 
     <div class="page-shell">
       <nav class="sidebar" aria-label="Chapter navigation">
+        <p class="toc-part-label">Part I — Transformers &amp; the cache</p>
         <ul class="toc-list">
-          {chapters.map((ch) => (
+          {partOneChapters.map((ch) => (
             <li class={`toc-item${ch.number === _chapterNumber ? ' toc-item--active' : ''}`}>
+              <a href={ch.slug}>{ch.label}</a>
+            </li>
+          ))}
+        </ul>
+
+        <p class="toc-part-label toc-part-label--spaced">Part II — Beyond the cache</p>
+        <ul class="toc-list">
+          {partTwoChapters.map((ch) => (
+            <li class={`toc-item${currentPath === ch.slug ? ' toc-item--active' : ''}`}>
               <a href={ch.slug}>{ch.label}</a>
             </li>
           ))}
@@ -135,6 +157,21 @@ const chapters = [
     top: 49px;
     height: calc(100vh - 49px);
     overflow-y: auto;
+  }
+
+  /* Part labels above each TOC group */
+  .toc-part-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    margin: 0 0 var(--space-2) var(--space-3);
+    padding: 0;
+  }
+
+  .toc-part-label--spaced {
+    margin-top: var(--space-6);
   }
 
   .toc-list {
@@ -240,6 +277,10 @@ const chapters = [
       border-right: none;
       border-bottom: 1px solid var(--color-border);
       padding: var(--space-3) var(--space-4);
+    }
+
+    .toc-part-label {
+      display: none;
     }
 
     .toc-list {
