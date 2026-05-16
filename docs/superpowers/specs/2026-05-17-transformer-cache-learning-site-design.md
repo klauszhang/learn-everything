@@ -224,15 +224,58 @@ The product-level details:
 - **Demo:** two consecutive requests side-by-side; hover segments to see "hit" vs "miss". Toggle: edit something in the early prefix (or change a tool definition) → watch the whole cache go cold.
 - **Practical takeaways:** keep stable content early, mutable content late; avoid small edits to early text; tool/system-prompt churn silently nukes the cache; 5-minute TTL means back-to-back turns benefit most, longer pauses lose the cache unless you pay for the 1-hour tier.
 
+## Development workflow
+
+Multi-agent implementation needs explicit conventions so the work stays legible after the fact and so parallel agents can coordinate without colliding.
+
+### Branch and worktree per feature
+
+- **One feature = one branch = one worktree.** A "feature" here is anything big enough to warrant an integration step: the project scaffold, the chapter skeleton, each of chapters 1–7, the README, etc.
+- Worktrees live under `.worktrees/<branch-name>/` at the repo root. The directory is gitignored.
+- Branch naming: `feat/<slug>` (e.g., `feat/scaffold`, `feat/ch-03-attention`).
+- When a feature is complete and reviewed, the branch is merged back to `main` and its worktree removed.
+
+### Commits as changelog
+
+- Each commit captures **one logical change** with a clear, present-tense summary in the first line (≤72 chars) and any rationale in the body.
+- Within a feature branch, commits are the granular changelog: an outside reader should be able to read `git log feat/<slug>` and follow what happened, in order, without opening files.
+- No squash-on-merge: feature branches preserve their commit history when merged so the changelog stays intact on `main`.
+- No "WIP" commits in merged branches — rebase/clean before merge if needed.
+
+### Shared `tasks/` for inter-agent coordination
+
+When multiple subagents work in parallel worktrees, they need a shared scratchpad to publish status, blockers, decisions, and handoffs without going through the main branch.
+
+- A real `tasks/` directory lives at the repo root in the main worktree.
+- Every feature worktree exposes the same `tasks/` via a relative symlink: `.worktrees/<branch>/tasks → ../../tasks/`.
+- `tasks/` is **gitignored** — coordination files are not part of the project history.
+- Suggested file convention inside `tasks/`:
+  - `tasks/<branch-name>.md` — one file per active feature branch. The agent owning that branch writes status, decisions, and questions there.
+  - `tasks/_shared.md` — cross-cutting notes (style decisions, terminology, gotchas) any agent can read.
+- Agents read `tasks/` at the start of work and update their own file as they go. The main agent reads everything to coordinate.
+
+### Where this maps in the implementation plan
+
+The bootstrap phase (step 1 below) sets up everything in this section — the `.worktrees/` and `tasks/` directories, the symlink-creation helper, and the `.gitignore` entries — so that every subsequent feature can adopt the workflow without ceremony.
+
 ## Implementation order
 
-1. **Project scaffold.** `bunx create-astro@latest` with the React + MDX integrations. Use Bun for the install step (`bun install`). Configure `astro.config.mjs`, add TypeScript paths, set up `src/styles/global.css`. Verify `bun run dev` serves a hello-world page.
-2. **Skeleton.** `ChapterLayout.astro` (header, sidebar TOC, prev/next, arrow-key nav), `CacheCallout.astro`, `src/data/*.ts` stubs, and Ch 0 (`index.mdx`) wired end-to-end. Verify in dev server: layout renders, TOC highlights the current chapter, prev/next chain works, arrow keys move between chapters.
-3. **Chapters 1–7.** Each chapter is independent of the others after the skeleton lands. Each one is: write the `.mdx` prose + frontmatter, build the one React island that chapter needs, populate `src/data/<topic>.ts`. These can be parallelized across subagents.
-4. **README.md** — how to run the site (`bun install`, `bun run dev`), what each chapter covers, and a short note on the non-goals.
-5. **Manual review.** Run `bun run build && bun run preview`, open each chapter, confirm diagrams render, all interactions work, prev/next chain is intact, no console errors, no broken imports.
+1. **Bootstrap.** Done in the main worktree on `main`.
+   - `bunx create-astro@latest` with the React + MDX integrations; install with `bun install`.
+   - Configure `astro.config.mjs`, TypeScript paths, `src/styles/global.css`.
+   - Create the workflow scaffolding from the section above:
+     - `tasks/` directory (real, in main worktree) with a starter `tasks/_shared.md` describing the coordination convention.
+     - `.worktrees/` directory (empty, but its existence is documented).
+     - `.gitignore` entries: `tasks/`, `.worktrees/`, plus the Astro/Bun defaults (`node_modules/`, `dist/`, `.astro/`, `bun.lockb` is **kept** as it's the lockfile).
+     - A short shell helper `scripts/new-worktree.sh` (or equivalent Bun script) that takes a branch name, creates the worktree under `.worktrees/<branch>/`, and creates the `tasks` symlink inside it. Document its usage in the README.
+   - Verify `bun run dev` serves a hello-world page.
+   - Commit history for this phase: one commit for the Astro scaffold, one for the workflow scaffolding, one for the gitignore. Merge to `main` (or just commit directly since this is bootstrap).
+2. **Skeleton** (`feat/skeleton`). `ChapterLayout.astro` (header, sidebar TOC, prev/next, arrow-key nav), `CacheCallout.astro`, `src/data/*.ts` stubs, and Ch 0 (`index.mdx`) wired end-to-end. Verify in dev: layout renders, TOC highlights current chapter, prev/next works, arrow keys move between chapters. Merge to `main` before chapter work starts.
+3. **Chapters 1–7** (`feat/ch-01-tokens`, `feat/ch-02-embeddings`, …). Each chapter is its own branch and worktree. Each chapter is independent of the others after the skeleton lands. Per chapter: write the `.mdx` prose + frontmatter, build the one React island that chapter needs, populate `src/data/<topic>.ts`. Subagents work in parallel, one per chapter, coordinating through `tasks/<branch>.md` files.
+4. **README.md** (`feat/readme`). How to run (`bun install`, `bun run dev`), how to use the worktree workflow (`scripts/new-worktree.sh`), what each chapter covers, non-goals.
+5. **Manual review** (on `main` after all merges). Run `bun run build && bun run preview`, open each chapter, confirm diagrams render, all interactions work, prev/next chain is intact, no console errors, no broken imports.
 
-Chapters 1–7 are intentionally independent — same layout, same data folder, separate components — so the implementation phase can fan out to one subagent per chapter.
+Chapters 1–7 are intentionally independent — same layout, same data folder, separate components — so the implementation phase fans out to one subagent per chapter, each in its own worktree, coordinating through the shared `tasks/` directory.
 
 ## Risks and unresolved questions
 
