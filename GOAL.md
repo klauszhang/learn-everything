@@ -247,6 +247,87 @@ When multiple agents work in parallel worktrees, they coordinate through a share
 
 ---
 
+## Implementation strategy
+
+This is a long-running session. The orchestrating agent (the one reading this file) must stay lean. Bulk work gets delegated; the orchestrator integrates results and makes architectural calls.
+
+### Tier the model by task complexity
+
+Pick the cheapest model that will actually do the job well. Token spend matters because this session runs over many chapters.
+
+| Task shape | Model | Examples |
+|---|---|---|
+| Mechanical, well-specified, low judgment | **Haiku** | Generate `src/data/<topic>.ts` from a clear schema; produce a CSS module from a spec; rename symbols; write a README from a bulleted outline; convert one chapter outline into MDX scaffolding. |
+| Implementation requiring judgment | **Sonnet** | Build a React island component (e.g. `AttentionMatrix.tsx`); write a chapter's prose; design `ChapterLayout.astro`; resolve a merge conflict; debug a runtime error. |
+| Architectural calls, ambiguous problems, hard debugging | **Opus** | The orchestrator itself; deciding between competing approaches; root-causing a bug that survived one Sonnet pass; final integration review. |
+
+Use the `Agent` tool's `model` parameter (`"haiku"` / `"sonnet"` / `"opus"`) to set the tier when dispatching. If unspecified, the subagent inherits the orchestrator's model — which is the wrong default for cheap mechanical work.
+
+### Subagents have two distinct roles
+
+**1. Consultants** — single-shot focused work, no code edits, just answers:
+
+- Research: "Look up what Anthropic's docs currently say about prompt cache breakpoint limits and TTL pricing. Return only the facts."
+- Review: "Read `src/components/AttentionMatrix.tsx` and the Ch 3 MDX. Flag any technical inaccuracies. ≤200 words."
+- Audit: "Sweep all 8 chapter MDX files. List any claim that's stated more confidently than the underlying ML literature supports."
+
+Use `Explore` for read-only file/symbol hunts. Use `general-purpose` for anything that needs synthesis.
+
+**2. Builders** — implement a feature end-to-end in an isolated worktree:
+
+- Dispatched once per chapter during the parallel chapter phase. Each builder gets: a path to `GOAL.md`, the chapter number and slug, the worktree path, the branch name. The builder reads `GOAL.md` + `tasks/_shared.md`, does the work, commits incrementally on its branch, updates `tasks/<branch>.md`, and reports back.
+- The orchestrator verifies (file diff, `bun run build`) before merging.
+
+### Self-check and iterate until the limit is reached
+
+Every dispatched agent — and the orchestrator itself — self-checks its output and iterates until no meaningful improvement remains *or* a stated limit is hit. Never stop at first-pass.
+
+Every dispatch prompt **must** include explicit limits so the agent knows when to stop:
+
+- **Max iterations** (usually 3) — hard ceiling regardless of remaining issues.
+- **Token budget** (optional) — stop and report once exceeded.
+- **No-improvement break** — if an iteration adds no meaningful improvement, stop.
+
+The agent's final report ends with: iterations used (`N of MAX`), one-line improvement note per iteration, list of remaining issues not fixed, and the reason for stopping (`done met` / `iteration limit` / `no improvement` / `token budget`). If a limit was hit with unresolved issues, the orchestrator decides whether to dispatch a follow-up — silent acceptance of incomplete work is forbidden.
+
+The orchestrator self-checks before declaring any phase done: walks `GOAL.md`'s success criteria for that phase, confirms `bun run build` is green, reads any active `tasks/<branch>.md` for unresolved flags, and only then merges and moves on. See `AGENTS.md` for the full self-check checklist.
+
+### Parallel dispatch
+
+When several independent tasks are ready (the classic case: chapters 1–7 after the skeleton lands), dispatch all of them in **one message** with multiple `Agent` tool calls in parallel. Sequential dispatch wastes wall-clock time for no benefit.
+
+### Context hygiene
+
+The orchestrator's context is the bottleneck for a long-running session. Discipline:
+
+- **Don't re-read what hasn't changed.** Trust the file state the harness reports.
+- **Capture decisions, drop noise.** When a subagent returns a 500-word report, distill the actionable findings into 1–3 lines (and into `tasks/_shared.md` if cross-cutting). Don't quote the whole report back.
+- **Trust but verify edits.** A subagent's summary describes intent, not necessarily what landed. After any builder agent, check the diff with `git -C <worktree> diff` and run `bun run build` before merging.
+- **Move heavy investigation to subagents.** Grep sweeps, log trawls, broad searches → spawn an `Explore` agent and keep only the findings.
+
+### Resumption protocol (long-running sessions)
+
+When picking up a session after a break, do this in order before taking action:
+
+1. `cat GOAL.md` — re-anchor on the project.
+2. `git log --oneline --all` — see what's been done.
+3. `git branch -a` and `git worktree list` — see what's in flight.
+4. `ls tasks/` and read `tasks/_shared.md` plus any active `tasks/<branch>.md`.
+5. Identify the next unblocked item in the **Implementation order** section.
+6. State, in one sentence, what you're picking up and why — then proceed.
+
+The combination of `GOAL.md` (source of truth) + `git log` (granular changelog) + `tasks/` (live coordination state) is designed to make this resumption cheap. Keep all three honest.
+
+### What the orchestrator should *not* delegate
+
+- Reading `GOAL.md` at session start.
+- Architectural decisions about the project shape.
+- Merging feature branches into `main`.
+- Final integration review before declaring a phase done.
+- Anything a single `Read` or `Bash` call would resolve in seconds — delegating those wastes more tokens than it saves.
+
+---
+
 ## Implementation order
 
 ### 1. Bootstrap (on `main`, direct commits — one commit per logical unit)
