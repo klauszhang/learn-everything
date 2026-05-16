@@ -1,11 +1,23 @@
 ---
 // CacheCallout.astro — static, no JS.
-// Use at the end of every chapter for the "How this connects to the cache" section.
-// Styled with --color-cache (amber) and --color-cache-soft from global.css.
+// Used as a chapter-closing takeaway across both Part I (cache topics) and
+// Part II (extension topics). The amber visual is intentional continuity,
+// not a strict "cache hit" marker.
+//
+// Public API (do not rename — existing MDX imports this by name):
+//   <CacheCallout>…slot content…</CacheCallout>
+//   <CacheCallout label="Custom label">…slot content…</CacheCallout>
+//
+// The default label preserves Part I's "How this connects to the cache"
+// wording so existing chapters keep their original presentation. Part II
+// (extension) chapters pass an explicit override, e.g.
+// label="Chapter takeaway", since they don't all have a cache angle.
+
+const { label = 'How this connects to the cache' } = Astro.props;
 ---
 
 <aside class="cache-callout">
-  <div class="cache-callout__label">How this connects to the cache</div>
+  <div class="cache-callout__label">{label}</div>
   <div class="cache-callout__body">
     <slot />
   </div>
