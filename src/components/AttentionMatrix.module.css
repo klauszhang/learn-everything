@@ -1,0 +1,187 @@
+/* AttentionMatrix.module.css — scoped styles for the Ch 3 interactive demo */
+
+.figure {
+  margin: var(--space-8) 0;
+}
+
+/*
+ * Grid layout: 1 corner + N col-headers, then N rows of (1 row-header + N cells).
+ * Total columns: 1 + N (where N = number of tokens).
+ * CSS grid with 9 columns (1 label + 8 token columns).
+ */
+.wrapper {
+  display: grid;
+  grid-template-columns: 72px repeat(8, 1fr);
+  gap: 3px;
+  max-width: 620px;
+  overflow-x: auto;
+}
+
+.corner {
+  /* Empty top-left spacer */
+}
+
+/* Column header buttons */
+.colHeader {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px 2px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text);
+  text-align: center;
+  transition: background 0.12s, border-color 0.12s;
+  min-width: 0;
+}
+
+.colHeader:hover {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.colSelected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  font-weight: 700;
+}
+
+/* Row header buttons */
+.rowHeader {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--color-text);
+  text-align: right;
+  transition: background 0.12s, border-color 0.12s;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowHeader:hover {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.rowSelected {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  font-weight: 700;
+}
+
+/* Individual cells */
+.cell {
+  aspect-ratio: 1;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+  transition: background-color 0.15s;
+  min-height: 32px;
+}
+
+/* Masked cells (upper triangle — causal mask) */
+.masked {
+  background: repeating-linear-gradient(
+    45deg,
+    #f0f0f0,
+    #f0f0f0 3px,
+    #e8e8e8 3px,
+    #e8e8e8 6px
+  );
+  border-color: #e0e0e0;
+  opacity: 0.5;
+}
+
+/* Active row overlay (for selected query token) */
+.activeRow {
+  box-shadow: inset 0 0 0 2px var(--color-accent);
+}
+
+.tokenLabel {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Axis labels */
+.axisLabels {
+  display: flex;
+  justify-content: space-between;
+  max-width: 620px;
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+  color: var(--color-muted);
+}
+
+.axisY {
+  writing-mode: horizontal-tb;
+}
+
+.axisX {
+  text-align: right;
+}
+
+/* Legend */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  flex-wrap: wrap;
+}
+
+.legendSwatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid var(--color-border);
+  flex-shrink: 0;
+}
+
+.legendMasked {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  border: 1px solid #e0e0e0;
+  flex-shrink: 0;
+  background: repeating-linear-gradient(
+    45deg,
+    #f0f0f0,
+    #f0f0f0 3px,
+    #e8e8e8 3px,
+    #e8e8e8 6px
+  );
+}
+
+/* Hint / status text */
+.hint {
+  margin-top: var(--space-3);
+  font-size: 0.88rem;
+  color: var(--color-muted);
+  min-height: 1.5em;
+}
+
+.hint strong {
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+}
+
+/* Caption */
+.caption {
+  margin-top: var(--space-2);
+  font-size: 0.82rem;
+  color: var(--color-muted);
+  font-style: italic;
+  line-height: 1.55;
+  max-width: 620px;
+}
