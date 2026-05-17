@@ -8,9 +8,433 @@ next: "/indexing-strategies"
 ---
 
 import CacheCallout from '../components/CacheCallout.astro';
+import AccessShapeChooser from '../components/AccessShapeChooser.tsx';
 
-This chapter is being written from its research dossier at `docs/research/data-search-strategies.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+You typed a SQL `WHERE`, hit enter, and got rows in 3 ms. There were 50 million rows. What just happened?
+
+The database did not read all 50 million rows. It used a **strategy** — a plan for navigating from your question to the matching rows without touching the data it didn't need. Each strategy makes a bet: "my query looks like *this*, my data looks like *that*, so the fastest path is *here*." Get the bet right and you're fast. Get it wrong and you scan 50 million rows anyway, just slower.
+
+This chapter maps the strategies to the questions that fit them. Not a formal survey of algorithms — a practical guide to the access shape that determines which one wins.
+
+---
+
+## Linear scan — the honest baseline
+
+The starting point is the for-loop:
+
+```
+data = [3, 7, 9, 12, 18, 23, 31, 45]
+target = 23
+
+for item in data:
+    if item == target:
+        return item   # found at index 5
+```
+
+No structure. No cleverness. Read everything, return the matches.
+
+This is the right choice more often than its reputation suggests. When **N is small** — a few hundred to a few thousand items — the overhead of building and maintaining an index exceeds the cost of the scan itself. PostgreSQL's query planner will ignore a B-tree index and do a sequential scan when estimated row count is low enough that random I/O from index traversal would be slower than just reading the rows.
+
+There is also the **cache-locality argument**. A contiguous in-memory array is exactly what CPUs are designed to prefetch. Modern processors and their caches handle sequential reads extremely well. ClickHouse exploits this deliberately — it stores columns contiguously and processes them with SIMD vectorization, making a linear scan over compressed columnar data competitive with indexed lookup for analytical workloads.
+
+When is a linear scan **wrong**? For 50 million rows on disk, reading every row means roughly 8 minutes of I/O. A B-tree index narrows that to 3 ms — four orders of magnitude. The scan's bad reputation is entirely earned in that context.
+
+**Misconception: "Linear scan is always bad."** False for small N, false for vectorized in-memory scans, and false when every row will be read anyway (a `COUNT(*)`, a full-table ETL). The criticism applies to disk-based scans over large tables, not the algorithm itself.
+
+---
+
+## Binary search — the bedrock
+
+Sorting the data first unlocks binary search — one of the most useful algorithms in computing.
+
+Find 23 in this sorted array. Eight items. Two steps.
+
+```
+[3,  7,  9,  12,  18,  23,  31,  45]
+ 0   1   2    3    4    5    6    7
+```
+
+**Step 1.** Middle element: index 3, value 12. Is 23 > 12? Yes — discard the left half.
+
+```
+[18,  23,  31,  45]
+  4    5    6    7
+```
+
+**Step 2.** New middle: index 5, value 23. Is 23 == 23? Done.
+
+Two steps, not eight. Each step cuts the remaining items in half. For 1 billion items, the same logic takes at most 30 steps (log₂(1 000 000 000) ≈ 30). "30 hops finds anything in a billion-row sorted array" is one of the most useful numbers in computing.
+
+Binary search requires sorted data — a real cost paid upfront. The bet: pay once, amortize over many lookups. It shows up everywhere sorted data exists: inside every B-tree node, in every "where does this key land in this sorted file?" database lookup, in PostgreSQL's GIN index walking its sorted term dictionary.
+
+---
+
+## Hash-based lookup — O(1) average, with footnotes
+
+Instead of searching, compute a shortcut. Run a key through a hash function, get an array index, look there directly.
+
+```
+hash("alice@example.com") → 4   →  array[4] = "alice"
+hash("bob@example.com")   → 7   →  array[7] = "bob"
+```
+
+Lookup any key in one step, regardless of how many items are stored. The formal claim is **O(1) average** — but two footnotes matter.
+
+**Collisions.** Two keys can hash to the same index. Real hash tables handle this with separate chaining (a list at each slot) or open addressing (probe nearby slots). Either way, worst-case degrades to O(N). A good hash function keeps this theoretical.
+
+**No range queries.** Hash destroys ordering information. A hash index cannot answer `WHERE age BETWEEN 30 AND 40` — there is no way to enumerate the hash slots for all ages in a range. This rules out hash maps for any query involving `>`, `<`, `BETWEEN`, or `ORDER BY`.
+
+**Misconception: "Hash is always faster than tree."** Only for pure equality lookup. Hash cannot do range queries at all — that alone makes B-trees the default in relational databases. Beyond that, at small N, binary search over a sorted array often beats a hash table on cache locality (sequential memory vs. pointer chasing).
+
+In practice: Python `dict`, Go `map`, JavaScript `Map`, and Java `HashMap` are all hash tables — the default for in-memory key-value lookup. PostgreSQL does support hash indexes explicitly (`CREATE INDEX USING HASH`), but the planner rarely chooses them over B-tree unless the workload is purely equality with no range queries.
+
+---
+
+## B-tree and B+-tree — the disk-era default
+
+Before SSDs, databases lived on spinning disks where a random byte took ~10 ms to reach. A binary search tree stores one key per node, making a 30-level-deep structure for 1 billion records: 30 × 10 ms = 300 ms per lookup.
+
+A **B-tree** node holds many keys — perhaps 100 or 1 000. For 1 billion records, the tree is now 3–5 levels deep: 3–5 × 10 ms = 30–50 ms. An order-of-magnitude improvement, just by widening each node.
+
+The **B+-tree** variant improves further by storing data records *only* at leaf nodes. Internal nodes hold routing keys only, so they branch wider (more keys fit without data). The leaves form a **doubly-linked list** along the bottom of the tree.
+
+That linked leaf list is the B+-tree's defining advantage:
+
+- **Range scans.** Find the starting leaf, then walk the chain forward. `WHERE date BETWEEN '2026-01-01' AND '2026-06-30'` becomes: find January 1st leaf, walk to June 30th. No backtracking.
+- **Internal nodes branch more widely.** Fewer levels. Fewer disk reads.
+
+PostgreSQL, MySQL (InnoDB), SQLite, Oracle, SQL Server — every major RDBMS stores its primary indexes as B+-trees. SSDs reduced the per-hop penalty but did not change the structure: the linked leaf list still maps perfectly to sequential reads, and log_B(N) hops is still a very small number.
+
+---
+
+## Skip lists — probabilistic trees
+
+Imagine a sorted linked list. Lookup is O(N) — you scan from the start. Now add an "express lane" that skips half the nodes. A second express lane skips half again. Enough layers and you reach O(log N) lookup with no rotation logic.
+
+A **skip list** formalizes this: each inserted element gets a random number of levels (half get 1 level, a quarter get 2, an eighth get 3, and so on). The result behaves statistically like a balanced tree.
+
+Skip lists are notably **easier to make lock-free** than B-trees. Rotation operations in trees are hard to do atomically; skip lists can often use simpler compare-and-swap operations.
+
+**Redis sorted sets** use a dual structure: a skip list for sorted order (enabling `ZRANGEBYSCORE`-style range queries) and a hash table for O(1) member lookup. **RocksDB and LevelDB** use skip lists as the in-memory write buffer before data is flushed to sorted files on disk.
+
+---
+
+## Tries and radix trees — prefix experts
+
+A **trie** (pronounced "try") is a tree where each node represents one character and the path from root to a node spells a key prefix.
+
+```
+        (root)
+       /      \
+     a          b
+    / \          \
+   p   r          a
+   |   |          |
+   p   t          n
+   |              |
+   l             ana
+   |
+   e
+```
+
+This trie stores "apple," "art," and "banana." To look up "apple": root → 'a' → 'p' → 'p' → 'l' → 'e' → found. Five steps, regardless of how many other words are stored.
+
+Lookup cost is **O(key length)** — it scales with the length of the search term, not the dataset size.
+
+A **radix tree** (also called a compact prefix tree or Patricia trie) collapses single-child chains into single edges labeled with the whole substring:
+
+```
+      (root)
+     /       \
+  "app"      "ban"
+    |           |
+   "le"       "ana"
+```
+
+Same lookup, fewer nodes. `httprouter`, Go's HTTP router, uses a radix tree for path dispatch — `GET /users/:id` shares the prefix `GET /users/` with `GET /users` but branches at `/:id`.
+
+Where tries and radix trees live: **autocomplete** (type a prefix, enumerate the subtree), **IP routing** (Linux kernel uses a radix trie for longest-prefix-match on every forwarded packet), and **URL routing** in HTTP frameworks.
+
+---
+
+## Suffix arrays and FM-index — substring search
+
+A trie finds keys by *prefix*. Suffix arrays find *arbitrary substrings* — "find every position in this 3 GB genome where `ACGT` appears."
+
+Take the string "banana." List all its suffixes, sorted alphabetically:
+
+```
+5: a
+3: ana
+1: anana
+0: banana
+4: na
+2: nana
+```
+
+To find "ana": binary-search the sorted suffix list for suffixes starting with "ana." The matching range covers original positions 3 and 1 — two occurrences, found in three binary-search steps without scanning the full string.
+
+The **FM-index** (Ferragina-Manzini, 2000) applies the Burrows-Wheeler Transform to compress the suffix array into a structure often smaller than the original text while still supporting O(|pattern|) substring lookup. DNA alignment tools like `bwa` and `bowtie` use FM-indexes to align millions of sequencing reads per second against a 3-billion-base human genome.
+
+---
+
+## Inverted indexes — the search engine workhorse
+
+For each word in your document collection, store a list of which documents contain it. That list is the **postings list**. The collection of (word → postings list) mappings is the **inverted index**.
+
+| Doc | Text |
+|-----|------|
+| d1 | "the quick brown fox" |
+| d2 | "the slow brown dog" |
+| d3 | "the quick red fox" |
+| d4 | "a quick brown dog jumps" |
+
+After stopword removal, the index looks like:
+
+| Term | Postings list |
+|------|---------------|
+| quick | [d1, d3, d4] |
+| brown | [d1, d2, d4] |
+| fox   | [d1, d3] |
+| slow  | [d2] |
+| dog   | [d2, d4] |
+| red   | [d3] |
+| jumps | [d4] |
+
+Boolean queries become set operations on postings lists:
+
+- **"quick AND fox"** → intersect [d1, d3, d4] ∩ [d1, d3] → [d1, d3]
+- **"slow OR red"** → union [d2] ∪ [d3] → [d2, d3]
+
+Postings lists are kept **sorted by document ID** so intersection and union run in O(M + N) time — the classic merge of two sorted lists.
+
+**BM25** (Best Match 25) turns boolean retrieval into ranked retrieval. The intuition: a document that uses the query term many times is likely more relevant (term frequency), but a term that appears in every document tells you nothing (inverse document frequency), and a long document mentioning the term once is less relevant than a short document mentioning it once (length normalization). No training data required — BM25 is the classical baseline for full-text search and the default ranking function in Elasticsearch.
+
+Lucene is the reference implementation (backing Elasticsearch and OpenSearch). PostgreSQL's `tsvector` / `GIN` index implements the same pattern inside a relational database.
+
+---
+
+## Bloom filters — "definitely not here"
+
+You have 1 000 SSTable files on disk. A read request arrives for a key. The key might be in any file — or none of them. You cannot afford to open all 1 000 files for a key that doesn't exist.
+
+A **Bloom filter** is a compact bit array plus K hash functions.
+
+- **To add a key:** run it through each hash function to get K positions; flip those bits on.
+- **To query a key:** check those K positions. If any bit is off — **definitely not present**, never opened this file. If all bits are on — *probably present*, open the file and confirm.
+
+The guarantee:
+
+> **No false negatives.** A key that was inserted will always return "probably present."
+> **Some false positives.** A key that was never inserted may return "probably present" if its bit positions were flipped by other keys.
+
+With ~10 bits per key, the false positive rate is approximately 1%. RocksDB stores a Bloom filter in every SSTable's metadata. When a read request arrives, the filter is checked first — if it says "not present," the file is skipped entirely.
+
+**Misconception: "Bloom filters give false negatives."** They do not. The guarantee is asymmetric: "definitely not here" is always correct; "probably here" occasionally lies. A Bloom filter never misses a key that was inserted.
+
+Cuckoo filters (Fan et al., 2014) extend the idea to support deletion while maintaining similar space efficiency. RocksDB also offers Ribbon filters, which save about 30% of Bloom filter space at the cost of more CPU during construction.
+
+---
+
+## Zone maps and min/max indexes — column pruning
+
+You have a billion rows of time-series data split into 10 000 files. A query: `WHERE date > '2026-01-01'`. Most files contain 2024 and 2025 data. You want to skip them without opening them.
+
+A **zone map** (also called a min/max index or block statistics) stores, for each chunk of data, the minimum and maximum value of each column. At query time:
+
+```
+Chunk 1: date min=2024-01-01, max=2024-12-31  → skip (max < query bound)
+Chunk 2: date min=2025-01-01, max=2025-06-30  → skip
+Chunk 3: date min=2025-07-01, max=2026-03-31  → read (overlaps)
+Chunk 4: date min=2026-01-01, max=2026-12-31  → read
+```
+
+From 10 000 chunks to 2 reads — 5 000× less I/O — by reading only a tiny metadata header per chunk.
+
+Zone maps appear as **Parquet row group statistics** (min/max per column per row group), **ClickHouse sparse primary indexes** (one mark per 8 192 rows, binary-searched at query time), and **ClickHouse data skipping indexes** (explicit minmax indexes on secondary columns).
+
+The critical constraint: **zone maps only prune when data is sorted by the column being filtered.** If dates are sorted, every chunk spans a narrow date range and pruning works. If dates are random, every chunk spans the full global range and no chunks get skipped. ClickHouse's documentation shows that different sort-key orderings produced a 3:1 versus 39:1 compression ratio on the same dataset — sort order is the single most impactful physical design decision for columnar databases.
+
+---
+
+## Two-stage retrieval — coarse to fine
+
+Almost every production search or recommendation system uses two stages:
+
+**Stage 1 — Retrieve:** fast, cheap, high recall. Get many candidates. Accept some irrelevant results to avoid missing relevant ones.
+
+**Stage 2 — Rerank:** slower, more expensive, high precision. Score the stage-1 candidates carefully. Return only the top K.
+
+The arithmetic: if stage 1 reduces the candidate set from 50 million to 100, stage 2 runs on only 100 items instead of 50 million — 500 000× cheaper.
+
+Examples:
+
+- **Elasticsearch rescore:** stage 1 retrieves top-N by BM25; stage 2 applies a learned-to-rank model over only those N documents.
+- **RAG hybrid retrieval:** stage 1 runs BM25 and/or approximate vector search (recall ~ 90–95%); stage 2 runs a cross-encoder reranker that reads query and document together.
+- **Recommender systems:** stage 1 (recall layer) retrieves thousands of candidates from a fast model; stage 2 (ranking layer) scores them with a deep neural network.
+- **Fraud detection:** stage 1 flags transactions via fast rule-based filters; stage 2 applies a high-accuracy model only to flagged ones.
+
+The pattern is a direct consequence of the **precision-recall trade-off under a latency budget**: use the cheapest function that has high recall to narrow the candidate set; reserve expensive precision-maximizing functions for the small set that survives.
+
+---
+
+## The access-shape map
+
+Every strategy is the right answer for a specific combination of query shape and data location. The grid below places each strategy where it wins.
+
+<style>{`
+  .access-map-wrap {
+    overflow-x: auto;
+    margin: var(--space-8) 0;
+  }
+
+  .access-map {
+    display: grid;
+    grid-template-columns: 110px repeat(4, 1fr);
+    grid-template-rows: auto repeat(2, auto);
+    gap: 2px;
+    min-width: 560px;
+    font-size: 0.82rem;
+  }
+
+  .access-map__header {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 0.5rem 0.6rem;
+    font-weight: 700;
+    text-align: center;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  .access-map__row-label {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    padding: 0.6rem 0.6rem;
+    font-weight: 700;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+    display: flex;
+    align-items: center;
+  }
+
+  .access-map__cell {
+    border: 1px solid var(--color-border);
+    padding: 0.55rem 0.6rem;
+    line-height: 1.4;
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .access-map__cell strong {
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+
+  .access-map__cell span {
+    font-size: 0.72rem;
+    color: var(--color-muted);
+  }
+
+  /* color families */
+  .cell-linear   { background: #f3f4f6; }
+  .cell-hash     { background: #f5f3ff; }
+  .cell-btree    { background: #e0f2fe; }
+  .cell-binary   { background: #dbeafe; }
+  .cell-trie     { background: #d1fae5; }
+  .cell-inverted { background: #fee2e2; }
+  .cell-fuzzy    { background: #fef9c3; }
+
+  .access-map__note {
+    margin-top: var(--space-4);
+    font-size: 0.8rem;
+    color: var(--color-muted);
+  }
+`}</style>
+
+<div class="access-map-wrap">
+  <div class="access-map">
+    {/* header row */}
+    <div class="access-map__header"></div>
+    <div class="access-map__header">Exact match</div>
+    <div class="access-map__header">Range</div>
+    <div class="access-map__header">Prefix</div>
+    <div class="access-map__header">Full-text / Fuzzy</div>
+
+    {/* in-memory row */}
+    <div class="access-map__row-label">In-memory</div>
+    <div class="access-map__cell cell-hash">
+      <strong>Hash table</strong>
+      <span>O(1) avg; no order needed</span>
+    </div>
+    <div class="access-map__cell cell-binary">
+      <strong>Sorted array + binary search</strong>
+      <span>Find start, walk forward</span>
+    </div>
+    <div class="access-map__cell cell-trie">
+      <strong>Trie / radix tree</strong>
+      <span>O(key length), enumerate subtree</span>
+    </div>
+    <div class="access-map__cell cell-fuzzy">
+      <strong>BK-tree / n-gram index</strong>
+      <span>Edit distance; n-gram candidates</span>
+    </div>
+
+    {/* on-disk row */}
+    <div class="access-map__row-label">On-disk</div>
+    <div class="access-map__cell cell-btree">
+      <strong>B+-tree</strong>
+      <span>5 hops to any row in 1 B</span>
+    </div>
+    <div class="access-map__cell cell-btree">
+      <strong>B+-tree</strong>
+      <span>Linked leaf list = sequential range scan</span>
+    </div>
+    <div class="access-map__cell cell-trie">
+      <strong>Trie + zone map</strong>
+      <span>Prefix narrows; zone map skips files</span>
+    </div>
+    <div class="access-map__cell cell-inverted">
+      <strong>Inverted index</strong>
+      <span>BM25 + two-stage rerank at scale</span>
+    </div>
+  </div>
+  <div class="access-map__note">
+    At small N (≈ 1 K rows), linear scan beats every entry in this table — index overhead exceeds the benefit.
+  </div>
+</div>
+
+---
+
+## Try it: query shape × data size
+
+Pick a query shape and data size to see which strategy wins and why.
+
+<AccessShapeChooser client:visible />
+
+---
+
+## Three misconceptions, addressed directly
+
+**"Hash is always faster than tree."** Not for range queries. `WHERE age BETWEEN 30 AND 40` has no hash-based implementation — hash destroys ordering. For pure equality at scale, hash is fast. For everything involving `>`, `<`, `BETWEEN`, or `ORDER BY`, B+-tree is the correct default. Beyond that, at small N, binary search over a sorted array often outperforms a hash table on cache locality.
+
+**"Bloom filters give false negatives."** They do not. The guarantee is asymmetric: "definitely not here" is always correct; "probably here" occasionally lies (false positives). If all K bit positions are set, the filter says "probably yes." If any bit is clear, it says "definitely no" — and that is always right. Bloom filters never miss a key that was inserted.
+
+**"Linear scan is always bad."** It is bad for large disk-based tables. It is often the right answer for small N, for vectorized in-memory scans (ClickHouse's SIMD column scans), and for workloads that touch every row anyway. PostgreSQL's query planner deliberately chooses sequential scan over an index when estimated row count is low enough that random I/O from index traversal would be slower.
+
+---
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/data-search-strategies.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+The strategies in this chapter are access patterns — ways to navigate from a question to matching data. The right strategy depends on the question shape (exact / range / prefix / full-text) and where the data lives (memory / disk).
+
+None of them stands alone in production. A **Bloom filter** sits in front of a B+-tree to skip files where a key is provably absent. A **zone map** prunes chunks before a trie or B+-tree descends into them. An **inverted index** hands its top-100 candidates to a two-stage reranker. Layered strategies handle the parts each is designed for.
+
+This is the same pattern Claude Code's prompt cache uses. The cache stores a pre-computed prefix — an exact-prefix lookup, keyed by the complete token sequence up to each breakpoint. When the next request arrives with the same opening tokens, the cache checks for an exact prefix match (a trie traversal where the "characters" are tokens), and serves the stored KV state without recomputing it. The access-shape insight here — prefix matching as a fast-path that skips expensive computation — is the same insight applied to transformer inference. Covered in Chapter 7.
+
 </CacheCallout>
