@@ -24,37 +24,39 @@ Every ANN system navigates a triangle. The three corners are **recall**, **laten
 
 {/* Static SVG: the recall / latency / memory tradeoff triangle */}
 <svg
-  viewBox="0 0 460 240"
-  width="460"
-  height="240"
+  viewBox="0 0 560 260"
+  width="560"
+  height="260"
   xmlns="http://www.w3.org/2000/svg"
   aria-label="Triangle diagram: three corners labeled Recall, Speed, and Memory. Three dots show where Flat, HNSW, and IVF+PQ sit on the triangle."
   className="ann-triangle-svg"
+  style={{ maxWidth: "100%", height: "auto" }}
 >
-  {/* Triangle */}
-  <polygon points="230,24 430,208 30,208" fill="none" stroke="#e5e7eb" strokeWidth="1.5" />
+  {/* Triangle (apex at top-center; base across bottom) */}
+  <polygon points="280,40 470,220 90,220" fill="none" stroke="#e5e7eb" stroke-width="1.5" />
 
-  {/* Corner labels */}
-  <text x="230" y="16" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Recall</text>
-  <text x="440" y="222" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Speed</text>
-  <text x="18"  y="222" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Memory</text>
+  {/* Corner labels — positioned outside the triangle, well inside the viewBox */}
+  <text x="280" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1a1a" font-family="system-ui,sans-serif">Recall</text>
+  <text x="470" y="238" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1a1a" font-family="system-ui,sans-serif">Speed</text>
+  <text x="90"  y="238" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1a1a" font-family="system-ui,sans-serif">Memory</text>
 
   {/* Flat — near Recall apex */}
-  <circle cx="230" cy="55" r="8" fill="#8b5cf6" />
-  <text x="248" y="52" fontSize="11" fill="#8b5cf6" fontFamily="system-ui,sans-serif">Flat (exact)</text>
-  <text x="248" y="64" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif">100% recall, slow</text>
+  <circle cx="280" cy="70" r="8" fill="#8b5cf6" />
+  <text x="296" y="68" font-size="11" font-weight="600" fill="#8b5cf6" font-family="system-ui,sans-serif">Flat (exact)</text>
+  <text x="296" y="80" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">100% recall, slow</text>
 
-  {/* HNSW — near Speed+Recall */}
-  <circle cx="360" cy="140" r="8" fill="#3b82f6" />
-  <text x="374" y="137" fontSize="11" fill="#3b82f6" fontFamily="system-ui,sans-serif">HNSW</text>
-  <text x="374" y="149" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif">Fast, high recall, high RAM</text>
+  {/* HNSW — near Speed+Recall (right side) */}
+  <circle cx="380" cy="155" r="8" fill="#3b82f6" />
+  <text x="394" y="153" font-size="11" font-weight="600" fill="#3b82f6" font-family="system-ui,sans-serif">HNSW</text>
+  <text x="394" y="165" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">fast, high recall,</text>
+  <text x="394" y="177" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">high RAM</text>
 
-  {/* IVF+PQ — near Speed+Memory */}
-  <circle cx="105" cy="180" r="8" fill="#10b981" />
-  <text x="36"  y="177" fontSize="11" fill="#10b981" fontFamily="system-ui,sans-serif" textAnchor="start">IVF+PQ</text>
-  <text x="36"  y="189" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif" textAnchor="start">Compact, moderate recall</text>
+  {/* IVF+PQ — near Speed+Memory (left side) */}
+  <circle cx="170" cy="190" r="8" fill="#10b981" />
+  <text x="14"  y="188" font-size="11" font-weight="600" fill="#10b981" font-family="system-ui,sans-serif">IVF+PQ</text>
+  <text x="14"  y="200" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">compact, moderate recall</text>
 
-  <text x="8" y="236" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — positions approximate typical tradeoffs, not precise measurements.</text>
+  <text x="14" y="256" font-size="9" fill="#9ca3af" font-family="system-ui,sans-serif">Illustrative — positions approximate typical tradeoffs, not precise measurements.</text>
 </svg>
 
 **Recall@K** measures how many of the true K nearest neighbors you actually get back. You establish ground truth by running an exact brute-force search, then compare what the ANN index returned. If the true top-5 for a query are A, B, C, D, E and the index returns A, B, C, D, F — that's Recall@5 = 0.80 (four of five correct). A system with Recall@10 of 0.95 finds, on average, 9.5 of the 10 true nearest neighbors. The missed one is usually so close in semantic space to what was returned that the difference in answer quality is undetectable.
@@ -111,107 +113,107 @@ The Flat index earns its place for corpora below roughly 100,000 vectors where q
     xmlns="http://www.w3.org/2000/svg"
   >
     {/* Cluster region hints */}
-    <text x="135" y="22"  textAnchor="middle" fontSize="10" fill="#8b5cf6" opacity="0.7" fontFamily="system-ui,sans-serif">Finance</text>
-    <text x="415" y="22"  textAnchor="middle" fontSize="10" fill="#10b981" opacity="0.7" fontFamily="system-ui,sans-serif">Legal</text>
-    <text x="135" y="355" textAnchor="middle" fontSize="10" fill="#3b82f6" opacity="0.7" fontFamily="system-ui,sans-serif">Engineering</text>
-    <text x="415" y="355" textAnchor="middle" fontSize="10" fill="#f97316" opacity="0.7" fontFamily="system-ui,sans-serif">Marketing</text>
-    <text x="270" y="190" textAnchor="middle" fontSize="10" fill="#ec4899" opacity="0.7" fontFamily="system-ui,sans-serif">HR</text>
+    <text x="135" y="22"  text-anchor="middle" font-size="10" fill="#8b5cf6" opacity="0.7" font-family="system-ui,sans-serif">Finance</text>
+    <text x="415" y="22"  text-anchor="middle" font-size="10" fill="#10b981" opacity="0.7" font-family="system-ui,sans-serif">Legal</text>
+    <text x="135" y="355" text-anchor="middle" font-size="10" fill="#3b82f6" opacity="0.7" font-family="system-ui,sans-serif">Engineering</text>
+    <text x="415" y="355" text-anchor="middle" font-size="10" fill="#f97316" opacity="0.7" font-family="system-ui,sans-serif">Marketing</text>
+    <text x="270" y="190" text-anchor="middle" font-size="10" fill="#ec4899" opacity="0.7" font-family="system-ui,sans-serif">HR</text>
 
     {/* ── EXACT MODE: dashed lines from query to all 60 dots ── */}
     {/* Finance cluster */}
-    <line class="exact-line" x1="107" y1="63" x2="40" y2="54"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="76" y2="81"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="96" y2="95"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="44" y2="117"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="129" y2="41"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="77" y2="126"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="143" y2="107" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="42" y2="78"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="101" y2="142" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="74" y2="38"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="40" y2="54"   stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="76" y2="81"   stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="96" y2="95"   stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="117"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="129" y2="41"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="77" y2="126"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="107" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="42" y2="78"   stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="101" y2="142" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="74" y2="38"   stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
     {/* Legal cluster */}
-    <line class="exact-line" x1="107" y1="63" x2="388" y2="38"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="424" y2="57"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="403" y2="88"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="455" y2="73"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="371" y2="67"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="440" y2="30"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="415" y2="115" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="362" y2="105" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="467" y2="106" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="393" y2="54"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="388" y2="38"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="424" y2="57"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="403" y2="88"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="455" y2="73"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="371" y2="67"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="440" y2="30"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="415" y2="115" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="362" y2="105" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="467" y2="106" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="393" y2="54"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
     {/* Engineering cluster */}
-    <line class="exact-line" x1="107" y1="63" x2="44" y2="305"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="92" y2="320"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="112" y2="285" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="56" y2="345"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="143" y2="308" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="36" y2="330"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="128" y2="348" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="74" y2="350"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="100" y2="340" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="44" y2="285"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="305"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="92" y2="320"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="112" y2="285" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="56" y2="345"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="308" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="36" y2="330"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="128" y2="348" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="74" y2="350"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="100" y2="340" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="285"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
     {/* Marketing cluster */}
-    <line class="exact-line" x1="107" y1="63" x2="388" y2="308" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="424" y2="330" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="403" y2="285" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="455" y2="345" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="371" y2="348" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="440" y2="315" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="415" y2="350" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="362" y2="320" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="467" y2="320" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="393" y2="330" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="388" y2="308" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="424" y2="330" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="403" y2="285" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="455" y2="345" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="371" y2="348" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="440" y2="315" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="415" y2="350" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="362" y2="320" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="467" y2="320" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="393" y2="330" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
     {/* HR cluster */}
-    <line class="exact-line" x1="107" y1="63" x2="228" y2="202" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="264" y2="226" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="244" y2="252" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="298" y2="212" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="212" y2="232" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="281" y2="254" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="308" y2="192" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="204" y2="212" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="256" y2="178" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="290" y2="232" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="228" y2="202" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="264" y2="226" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="244" y2="252" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="298" y2="212" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="212" y2="232" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="281" y2="254" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="308" y2="192" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="204" y2="212" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="256" y2="178" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="290" y2="232" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
     {/* Noise */}
-    <line class="exact-line" x1="107" y1="63" x2="180" y2="88"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="320" y2="245" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="231" y2="318" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="153" y2="220" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="336" y2="165" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="195" y2="278" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="283" y2="302" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="143" y2="168" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="372" y2="228" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
-    <line class="exact-line" x1="107" y1="63" x2="245" y2="98"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="180" y2="88"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="320" y2="245" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="231" y2="318" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="153" y2="220" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="336" y2="165" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="195" y2="278" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="283" y2="302" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="168" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="372" y2="228" stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="245" y2="98"  stroke="#d1d5db" stroke-width="0.8" stroke-dasharray="3 3" />
 
     {/* ── HNSW MODE: edges between visited nodes ── */}
     {/* Layer 2 long-range hop: HR hub → Finance hub */}
-    <line class="hnsw-edge" x1="256" y1="178" x2="96" y2="95"  stroke="#6366f1" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.7" />
+    <line class="hnsw-edge" x1="256" y1="178" x2="96" y2="95"  stroke="#6366f1" stroke-width="1.5" stroke-dasharray="6 3" opacity="0.7" />
     {/* Layer 1 hops within Finance */}
-    <line class="hnsw-edge" x1="96"  y1="95"  x2="76" y2="81"  stroke="#3b82f6" strokeWidth="1.5" opacity="0.7" />
-    <line class="hnsw-edge" x1="76"  y1="81"  x2="40" y2="54"  stroke="#3b82f6" strokeWidth="1.5" opacity="0.7" />
-    <line class="hnsw-edge" x1="76"  y1="81"  x2="129" y2="41" stroke="#3b82f6" strokeWidth="1.5" opacity="0.6" />
+    <line class="hnsw-edge" x1="96"  y1="95"  x2="76" y2="81"  stroke="#3b82f6" stroke-width="1.5" opacity="0.7" />
+    <line class="hnsw-edge" x1="76"  y1="81"  x2="40" y2="54"  stroke="#3b82f6" stroke-width="1.5" opacity="0.7" />
+    <line class="hnsw-edge" x1="76"  y1="81"  x2="129" y2="41" stroke="#3b82f6" stroke-width="1.5" opacity="0.6" />
     {/* Layer 0 local hops */}
-    <line class="hnsw-edge" x1="40"  y1="54"  x2="42" y2="78"  stroke="#22c55e" strokeWidth="1.2" opacity="0.6" />
-    <line class="hnsw-edge" x1="40"  y1="54"  x2="74" y2="38"  stroke="#22c55e" strokeWidth="1.2" opacity="0.6" />
-    <line class="hnsw-edge" x1="42"  y1="78"  x2="77" y2="126" stroke="#22c55e" strokeWidth="1.2" opacity="0.5" />
-    <line class="hnsw-edge" x1="129" y1="41"  x2="143" y2="107" stroke="#22c55e" strokeWidth="1.2" opacity="0.5" />
+    <line class="hnsw-edge" x1="40"  y1="54"  x2="42" y2="78"  stroke="#22c55e" stroke-width="1.2" opacity="0.6" />
+    <line class="hnsw-edge" x1="40"  y1="54"  x2="74" y2="38"  stroke="#22c55e" stroke-width="1.2" opacity="0.6" />
+    <line class="hnsw-edge" x1="42"  y1="78"  x2="77" y2="126" stroke="#22c55e" stroke-width="1.2" opacity="0.5" />
+    <line class="hnsw-edge" x1="129" y1="41"  x2="143" y2="107" stroke="#22c55e" stroke-width="1.2" opacity="0.5" />
 
     {/* ── ALL DOTS (always visible, opacity changes) ── */}
     {/* Finance cluster — true top-5 result dots: f2(76,81), f3(96,95), f1(40,54), f6(77,126), f8(42,78) */}
     {/* f1 */}
     <circle class="dot-unvisited" cx="40"  cy="54"  r="5.5" fill="#8b5cf6" opacity="0.35" />
     <circle class="dot-visited"   cx="40"  cy="54"  r="5.5" fill="var(--color-accent)" opacity="0" />
-    <circle class="dot-result-ring" cx="40" cy="54"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    <circle class="dot-result-ring" cx="40" cy="54"  r="10"  fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0" />
     {/* f2 */}
     <circle class="dot-unvisited" cx="76"  cy="81"  r="5.5" fill="#8b5cf6" opacity="0.35" />
     <circle class="dot-visited"   cx="76"  cy="81"  r="5.5" fill="var(--color-accent)" opacity="0" />
-    <circle class="dot-result-ring" cx="76" cy="81"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    <circle class="dot-result-ring" cx="76" cy="81"  r="10"  fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0" />
     {/* f3 */}
     <circle class="dot-unvisited" cx="96"  cy="95"  r="5.5" fill="#8b5cf6" opacity="0.35" />
     <circle class="dot-visited"   cx="96"  cy="95"  r="5.5" fill="var(--color-accent)" opacity="0" />
-    <circle class="dot-result-ring" cx="96" cy="95"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    <circle class="dot-result-ring" cx="96" cy="95"  r="10"  fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0" />
     {/* f4 */}
     <circle class="dot-unvisited" cx="44"  cy="117" r="5"   fill="#8b5cf6" opacity="0.25" />
     <circle class="dot-visited"   cx="44"  cy="117" r="5"   fill="var(--color-accent)" opacity="0" />
@@ -221,14 +223,14 @@ The Flat index earns its place for corpora below roughly 100,000 vectors where q
     {/* f6 */}
     <circle class="dot-unvisited" cx="77"  cy="126" r="5.5" fill="#8b5cf6" opacity="0.35" />
     <circle class="dot-visited"   cx="77"  cy="126" r="5.5" fill="var(--color-accent)" opacity="0" />
-    <circle class="dot-result-ring" cx="77" cy="126" r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    <circle class="dot-result-ring" cx="77" cy="126" r="10"  fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0" />
     {/* f7 */}
     <circle class="dot-unvisited" cx="143" cy="107" r="5"   fill="#8b5cf6" opacity="0.25" />
     <circle class="dot-visited"   cx="143" cy="107" r="5"   fill="var(--color-accent)" opacity="0" />
     {/* f8 */}
     <circle class="dot-unvisited" cx="42"  cy="78"  r="5.5" fill="#8b5cf6" opacity="0.35" />
     <circle class="dot-visited"   cx="42"  cy="78"  r="5.5" fill="var(--color-accent)" opacity="0" />
-    <circle class="dot-result-ring" cx="42" cy="78"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    <circle class="dot-result-ring" cx="42" cy="78"  r="10"  fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0" />
     {/* f9 */}
     <circle class="dot-unvisited" cx="101" cy="142" r="5"   fill="#8b5cf6" opacity="0.25" />
     <circle class="dot-visited"   cx="101" cy="142" r="5"   fill="var(--color-accent)" opacity="0" />
@@ -299,25 +301,25 @@ The Flat index earns its place for corpora below roughly 100,000 vectors where q
 
     {/* ── RESULT RINGS — always shown in BOTH modes ── */}
     {/* These are shown in exact mode too: exact search circles the top 5 */}
-    <circle class="result-ring-exact" cx="40"  cy="54"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
-    <circle class="result-ring-exact" cx="76"  cy="81"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
-    <circle class="result-ring-exact" cx="96"  cy="95"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
-    <circle class="result-ring-exact" cx="77"  cy="126" r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
-    <circle class="result-ring-exact" cx="42"  cy="78"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="40"  cy="54"  r="10" fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="76"  cy="81"  r="10" fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="96"  cy="95"  r="10" fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="77"  cy="126" r="10" fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="42"  cy="78"  r="10" fill="none" stroke="var(--color-accent)" stroke-width="2" opacity="0.9" />
 
     {/* Query marker */}
-    <circle cx="107" cy="63" r="10" fill="var(--color-accent)" stroke="white" strokeWidth="2.5" />
-    <text x="107" y="67" textAnchor="middle" fontSize="9" fill="white" fontWeight="700" fontFamily="system-ui,sans-serif">Q</text>
-    <text x="107" y="50" textAnchor="middle" fontSize="9" fill="var(--color-accent)" fontWeight="600" fontFamily="system-ui,sans-serif">"revenue outlook"</text>
+    <circle cx="107" cy="63" r="10" fill="var(--color-accent)" stroke="white" stroke-width="2.5" />
+    <text x="107" y="67" text-anchor="middle" font-size="9" fill="white" font-weight="700" font-family="system-ui,sans-serif">Q</text>
+    <text x="107" y="50" text-anchor="middle" font-size="9" fill="var(--color-accent)" font-weight="600" font-family="system-ui,sans-serif">"revenue outlook"</text>
 
     {/* Legend */}
     <circle cx="16" cy="358" r="5" fill="var(--color-accent)" opacity="0.9" />
-    <text x="26" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Top-5 result</text>
+    <text x="26" y="362" font-size="9" fill="#6b7280" font-family="system-ui,sans-serif">Top-5 result</text>
     <circle cx="110" cy="358" r="5" fill="var(--color-accent)" opacity="0.35" />
-    <text x="120" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Visited (HNSW)</text>
+    <text x="120" y="362" font-size="9" fill="#6b7280" font-family="system-ui,sans-serif">Visited (HNSW)</text>
     <circle cx="220" cy="358" r="5" fill="#8b5cf6" opacity="0.25" />
-    <text x="230" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Not visited</text>
-    <text x="8" y="374" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — hand-authored layout, not real model output.</text>
+    <text x="230" y="362" font-size="9" fill="#6b7280" font-family="system-ui,sans-serif">Not visited</text>
+    <text x="8" y="374" font-size="8" fill="#9ca3af" font-family="system-ui,sans-serif">Illustrative — hand-authored layout, not real model output.</text>
   </svg>
 </div>
 
@@ -358,70 +360,87 @@ HNSW applies exactly this strategy to a high-dimensional point cloud. When a new
 
 {/* Inline SVG: HNSW layer diagram */}
 <svg
-  viewBox="0 0 500 260"
-  width="500"
-  height="260"
+  viewBox="0 0 600 300"
+  width="600"
+  height="300"
   xmlns="http://www.w3.org/2000/svg"
-  aria-label="HNSW layer diagram. Three horizontal bands: a sparse top layer with 5 nodes connected by long-range edges, a medium middle layer, and a dense bottom layer with short local edges. A query path traces from top to bottom."
+  aria-label="HNSW layer diagram. Three horizontal bands: a sparse top layer with 4 nodes connected by long-range edges, a medium middle layer, and a dense bottom layer with short local edges. A query path traces from the top-layer entry point down through each layer to the answer in the dense layer."
   className="ann-hnsw-svg"
+  style={{ maxWidth: "100%", height: "auto" }}
 >
-  {/* Layer bands */}
-  <rect x="0"   y="0"   width="500" height="70"  fill="#f0f9ff" />
-  <rect x="0"   y="70"  width="500" height="80"  fill="#f8fafc" />
-  <rect x="0"   y="150" width="500" height="110" fill="#ffffff" />
-
-  {/* Layer labels */}
-  <text x="8" y="38" fontSize="10" fill="#0369a1" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 2 — sparse (6 nodes)</text>
-  <text x="8" y="50" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Long-range "highway" links — coarse navigation</text>
-  <text x="8" y="114" fontSize="10" fill="#374151" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 1 — medium (18 nodes)</text>
-  <text x="8" y="126" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Neighborhood-level links</text>
-  <text x="8" y="175" fontSize="10" fill="#374151" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 0 — dense (all 60 nodes)</text>
-  <text x="8" y="187" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Short local links — precise search</text>
-
-  {/* Layer 2 nodes + long-range edge */}
-  <circle cx="100" cy="36" r="7" fill="#3b82f6" opacity="0.85" />
-  <circle cx="200" cy="42" r="7" fill="#8b5cf6" opacity="0.65" />
-  <circle cx="320" cy="32" r="7" fill="#10b981" opacity="0.65" />
-  <circle cx="430" cy="44" r="7" fill="#f97316" opacity="0.65" />
-  <line x1="100" y1="36" x2="320" y2="32" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.55" />
-  <line x1="320" y1="32" x2="430" y2="44" stroke="#10b981" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.45" />
-
-  {/* Layer 1 nodes + medium edges */}
-  <circle cx="80"  cy="110" r="6" fill="#3b82f6" opacity="0.7"  />
-  <circle cx="130" cy="118" r="6" fill="#3b82f6" opacity="0.7"  />
-  <circle cx="170" cy="105" r="6" fill="#8b5cf6" opacity="0.5"  />
-  <circle cx="240" cy="115" r="6" fill="#ec4899" opacity="0.5"  />
-  <circle cx="310" cy="106" r="6" fill="#10b981" opacity="0.5"  />
-  <circle cx="380" cy="112" r="6" fill="#f97316" opacity="0.5"  />
-  <line x1="80"  y1="110" x2="130" y2="118" stroke="#3b82f6" strokeWidth="1.2" opacity="0.5" />
-  <line x1="130" y1="118" x2="170" y2="105" stroke="#6b7280" strokeWidth="1.2" opacity="0.35" />
-  <line x1="310" y1="106" x2="380" y2="112" stroke="#6b7280" strokeWidth="1.2" opacity="0.35" />
-
-  {/* Layer 0 — dense row of small nodes */}
-  {[55,80,105,125,145,165,185,205,225,245,265,285,305,325,345,365,385,405,430,455].map((x, i) => (
-    <circle key={i} cx={x} cy={210} r={4} fill={["#3b82f6","#3b82f6","#3b82f6","#8b5cf6","#8b5cf6","#ec4899","#ec4899","#ec4899","#9ca3af","#10b981","#10b981","#10b981","#3b82f6","#8b5cf6","#ec4899","#f97316","#f97316","#f97316","#9ca3af","#9ca3af"][i]} opacity={0.4 + (i % 3) * 0.1} />
-  ))}
-
-  {/* Query path arrows */}
-  {/* L2: entry → finance hub */}
-  <circle cx="100" cy="36" r="9" fill="none" stroke="#3b82f6" strokeWidth="2" />
-  {/* Arrow L2 → L1 */}
-  <line x1="100" y1="43" x2="100" y2="102" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
-  {/* Arrow L1 → L0 */}
-  <line x1="100" y1="116" x2="100" y2="202" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
-  {/* Move in L0 */}
-  <line x1="100" y1="210" x2="125" y2="210" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
-
   <defs>
-    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
-      <path d="M0,0 L0,6 L6,3 z" fill="#3b82f6" />
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto">
+      <path d="M0,0 L0,8 L8,4 z" fill="#2563eb" />
     </marker>
   </defs>
 
-  {/* Query label */}
-  <text x="110" y="34" fontSize="9" fill="#3b82f6" fontFamily="system-ui,sans-serif">Query enters here →</text>
+  {/* Layer bands */}
+  <rect x="0"   y="0"   width="600" height="80"  fill="#eff6ff" />
+  <rect x="0"   y="80"  width="600" height="90"  fill="#f8fafc" />
+  <rect x="0"   y="170" width="600" height="110" fill="#ffffff" />
 
-  <text x="8" y="256" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — not a real HNSW graph.</text>
+  {/* Left label column (separated from node area by a faint divider) */}
+  <line x1="180" y1="0" x2="180" y2="280" stroke="#e5e7eb" stroke-width="1" />
+
+  {/* Layer 2 labels */}
+  <text x="16" y="34" font-size="12" font-weight="700" fill="#0369a1" font-family="system-ui,sans-serif">Layer 2</text>
+  <text x="16" y="50" font-size="11" fill="#374151" font-family="system-ui,sans-serif">sparse · 6 nodes</text>
+  <text x="16" y="66" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">long-range "highway"</text>
+
+  {/* Layer 1 labels */}
+  <text x="16" y="118" font-size="12" font-weight="700" fill="#374151" font-family="system-ui,sans-serif">Layer 1</text>
+  <text x="16" y="134" font-size="11" fill="#374151" font-family="system-ui,sans-serif">medium · 18 nodes</text>
+  <text x="16" y="150" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">neighborhood links</text>
+
+  {/* Layer 0 labels */}
+  <text x="16" y="210" font-size="12" font-weight="700" fill="#374151" font-family="system-ui,sans-serif">Layer 0</text>
+  <text x="16" y="226" font-size="11" fill="#374151" font-family="system-ui,sans-serif">dense · all 60 nodes</text>
+  <text x="16" y="242" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">short local links</text>
+
+  {/* ── Layer 2 nodes + long-range edges ── */}
+  <line x1="220" y1="40" x2="380" y2="36" stroke="#3b82f6" stroke-width="1.5" stroke-dasharray="6 3" opacity="0.55" />
+  <line x1="380" y1="36" x2="520" y2="48" stroke="#10b981" stroke-width="1.5" stroke-dasharray="6 3" opacity="0.45" />
+  <circle cx="220" cy="40" r="8" fill="#3b82f6" opacity="0.9" />
+  <circle cx="300" cy="46" r="7" fill="#8b5cf6" opacity="0.65" />
+  <circle cx="380" cy="36" r="7" fill="#10b981" opacity="0.65" />
+  <circle cx="460" cy="42" r="7" fill="#ec4899" opacity="0.55" />
+  <circle cx="520" cy="48" r="7" fill="#f97316" opacity="0.65" />
+  <circle cx="560" cy="34" r="7" fill="#8b5cf6" opacity="0.55" />
+
+  {/* ── Layer 1 nodes + edges ── */}
+  <line x1="220" y1="125" x2="260" y2="132" stroke="#3b82f6" stroke-width="1.2" opacity="0.5" />
+  <line x1="260" y1="132" x2="310" y2="122" stroke="#6b7280" stroke-width="1.2" opacity="0.35" />
+  <line x1="430" y1="124" x2="490" y2="130" stroke="#6b7280" stroke-width="1.2" opacity="0.35" />
+  <circle cx="220" cy="125" r="6" fill="#3b82f6" opacity="0.75" />
+  <circle cx="260" cy="132" r="6" fill="#3b82f6" opacity="0.7" />
+  <circle cx="310" cy="122" r="6" fill="#8b5cf6" opacity="0.55" />
+  <circle cx="360" cy="130" r="6" fill="#ec4899" opacity="0.5" />
+  <circle cx="430" cy="124" r="6" fill="#10b981" opacity="0.55" />
+  <circle cx="490" cy="130" r="6" fill="#f97316" opacity="0.55" />
+  <circle cx="550" cy="120" r="6" fill="#8b5cf6" opacity="0.45" />
+
+  {/* ── Layer 0 — dense row of small nodes ── */}
+  {[200,220,240,260,280,300,320,340,360,380,400,420,440,460,480,500,520,540,560,580].map((x, i) => (
+    <circle key={i} cx={x} cy={235} r={4} fill={["#3b82f6","#3b82f6","#3b82f6","#8b5cf6","#8b5cf6","#ec4899","#ec4899","#ec4899","#9ca3af","#10b981","#10b981","#10b981","#3b82f6","#8b5cf6","#ec4899","#f97316","#f97316","#f97316","#9ca3af","#9ca3af"][i]} opacity={0.45 + (i % 3) * 0.1} />
+  ))}
+
+  {/* ── Query path: top → bottom ── */}
+  {/* Highlight entry node on layer 2 */}
+  <circle cx="220" cy="40" r="12" fill="none" stroke="#2563eb" stroke-width="2" />
+  {/* L2 → L1 */}
+  <line x1="220" y1="52" x2="220" y2="115" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)" />
+  {/* L1 → L0 */}
+  <line x1="220" y1="131" x2="220" y2="225" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)" />
+  {/* Walk within L0 to answer */}
+  <line x1="226" y1="235" x2="256" y2="235" stroke="#2563eb" stroke-width="2" marker-end="url(#arrow)" />
+  {/* Answer marker */}
+  <circle cx="260" cy="235" r="6" fill="none" stroke="#2563eb" stroke-width="2" />
+
+  {/* Query annotation — placed above the bands, well clear of layer labels */}
+  <text x="220" y="16" font-size="11" font-weight="600" fill="#2563eb" text-anchor="middle" font-family="system-ui,sans-serif">query enters</text>
+  <text x="260" y="266" font-size="10" fill="#2563eb" font-family="system-ui,sans-serif">answer</text>
+
+  <text x="16" y="293" font-size="9" fill="#9ca3af" font-family="system-ui,sans-serif">Illustrative — not a real HNSW graph.</text>
 </svg>
 
 - **Layer 2 (top, sparse):** a small fraction of all vectors, connected to long-range neighbors across the entire space. Think of these as the "highway network" — fast and coarse.

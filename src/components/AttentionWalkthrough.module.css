@@ -1,0 +1,341 @@
+/* AttentionWalkthrough.module.css — step-by-step QKV demo for Ch 3 */
+
+.figure {
+  margin: var(--space-8) 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  background: var(--color-surface);
+  font-family: var(--font-body);
+}
+
+/* Top bar — query picker + step indicator */
+.topBar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px dashed var(--color-border);
+}
+
+.picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: 0.85rem;
+}
+
+.pickerLabel {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
+.pickerBtn {
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+
+.pickerBtn:hover {
+  border-color: var(--color-accent);
+}
+
+.pickerBtnActive {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.stepIndicator {
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  font-family: var(--font-mono);
+}
+
+/* Step body */
+.stepBody {
+  min-height: 320px;
+  padding: var(--space-3) 0;
+}
+
+.stepTitle {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-2);
+  color: var(--color-text);
+}
+
+.stepNarration {
+  font-size: 0.9rem;
+  color: var(--color-text);
+  margin: 0 0 var(--space-4);
+  line-height: 1.55;
+}
+
+.stepNarration code {
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  background: var(--color-bg);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+/* Token table — used in steps 0, 1 */
+.tokenTable {
+  display: grid;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.tokenRow {
+  display: grid;
+  grid-template-columns: 48px repeat(4, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  transition: all 0.15s;
+}
+
+.tokenRowHeader {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 4px;
+  margin-bottom: 2px;
+}
+
+.tokenRowDim {
+  opacity: 0.35;
+}
+
+.tokenRowFocus {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+}
+
+.tokenName {
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.vec {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.vecBracket {
+  color: var(--color-muted);
+}
+
+.vecNum {
+  display: inline-block;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* Score / softmax / blend visualization */
+.scoreList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.scoreRow {
+  display: grid;
+  grid-template-columns: 110px 1fr 60px;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+}
+
+.scoreRowMasked {
+  opacity: 0.4;
+  background: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 4px,
+    rgba(0, 0, 0, 0.04) 4px,
+    rgba(0, 0, 0, 0.04) 8px
+  );
+}
+
+.scoreCalc {
+  color: var(--color-muted);
+  font-size: 0.78rem;
+}
+
+.scoreResult {
+  text-align: right;
+  font-weight: 600;
+  color: var(--color-accent);
+}
+
+.bar {
+  display: inline-block;
+  height: 14px;
+  background: var(--color-accent);
+  border-radius: 2px;
+  vertical-align: middle;
+  margin-left: 6px;
+  transition: width 0.3s;
+}
+
+.weightRow {
+  display: grid;
+  grid-template-columns: 110px 1fr 60px;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.barTrack {
+  height: 14px;
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.4s;
+}
+
+/* Blend visualization */
+.blendStack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.blendRow {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 4px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+}
+
+.blendSum {
+  margin-top: var(--space-3);
+  padding: 10px 12px;
+  border: 2px solid var(--color-accent);
+  border-radius: 4px;
+  background: var(--color-accent-soft);
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 600;
+  text-align: center;
+  color: var(--color-text);
+}
+
+.blendSum strong {
+  color: var(--color-accent);
+}
+
+/* Nav buttons */
+.nav {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  padding-top: var(--space-3);
+  border-top: 1px dashed var(--color-border);
+}
+
+.navBtn {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+  transition: all 0.12s;
+}
+
+.navBtn:hover:not(:disabled) {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}
+
+.navBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.navBtnPrimary {
+  background: var(--color-accent);
+  color: white;
+  border-color: var(--color-accent);
+}
+
+.navBtnPrimary:hover:not(:disabled) {
+  background: var(--color-accent);
+  filter: brightness(1.1);
+  color: white;
+}
+
+.progressDots {
+  display: flex;
+  gap: 6px;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-border);
+  transition: all 0.15s;
+}
+
+.dotActive {
+  background: var(--color-accent);
+  transform: scale(1.3);
+}
+
+.dotDone {
+  background: var(--color-accent);
+  opacity: 0.4;
+}
+
+.caption {
+  margin-top: var(--space-3);
+  font-size: 0.78rem;
+  color: var(--color-muted);
+  font-style: italic;
+  text-align: center;
+}

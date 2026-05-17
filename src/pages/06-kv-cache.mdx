@@ -35,7 +35,7 @@ The diagram below shows the KV cache state across decode steps. Rows are transfo
 {/* Inline SVG — static illustration of final filled state for no-JS fallback */}
 <noscript>
   <svg width="480" height="100" aria-label="KV cache grid illustration (static)">
-    <text x="0" y="16" fontSize="12" fill="#6b7280">Enable JavaScript to see the interactive cache grid demo.</text>
+    <text x="0" y="16" font-size="12" fill="#6b7280">Enable JavaScript to see the interactive cache grid demo.</text>
   </svg>
 </noscript>
 
@@ -43,7 +43,7 @@ The diagram below shows the KV cache state across decode steps. Rows are transfo
 
 The KV cache does not reuse work across different API requests. If you send two separate messages to Claude, the second request starts fresh — the KV tensors from the first are gone. It operates entirely within the memory of one running generation, with no persistence, no cross-request identity, and no awareness of previous conversations.
 
-It also does not change *what* the model computes, only *when*. The output of a generation with a KV cache is bit-for-bit identical to one without — the cache just eliminates redundant recalculation.
+It also does not change *what* the model computes, only *when*. A generation with a KV cache is mathematically equivalent to one without — the cache just eliminates redundant recalculation. (Strict bit-for-bit equality isn't guaranteed because floating-point addition isn't associative and the cached path reduces a different number of terms per step, but the difference is numerical noise, not behavior.)
 
 <CacheCallout>
   The KV cache is the **engine** — the intra-request optimization that makes long-context decoding tractable. It stores K and V for every past token in runtime memory, lives for exactly one generation, and is freed when the request ends.

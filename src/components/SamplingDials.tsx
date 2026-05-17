@@ -203,8 +203,6 @@ export default function SamplingDials() {
           color: var(--color-text);
           margin-top: 2px;
           white-space: nowrap;
-          position: absolute;
-          bottom: 0;
         }
 
         /* Controls */

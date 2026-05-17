@@ -98,7 +98,7 @@ export default function VectorSearchDemo() {
         aria-label="Illustrative 2D embedding scatter. Document positions are hand-authored for clarity, not computed from real vectors."
       >
         {/* Axis labels */}
-        <text x={W / 2} y={H - 6} textAnchor="middle" fontSize="10" fill="#9ca3af">Dimension 1 (illustrative)</text>
+        <text x={W - 8} y={H - 6} textAnchor="end" fontSize="10" fill="#9ca3af">Dimension 1 →</text>
         <text x="10" y={H / 2} textAnchor="middle" fontSize="10" fill="#9ca3af" transform={`rotate(-90, 10, ${H / 2})`}>Dimension 2</text>
 
         {/* Draw connector lines from query to top-K docs */}

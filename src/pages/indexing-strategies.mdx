@@ -41,42 +41,42 @@ The diagram below plots four index strategies against the three-way tradeoff. No
 `}</style>
 
 <div class="cost-triangle-wrap">
-<svg viewBox="0 0 440 370" aria-label="Cost triangle: read speed vs write speed vs space. Four index strategies are plotted inside the triangle.">
+<svg viewBox="0 0 440 390" aria-label="Cost triangle: read speed vs write speed vs space. Four index strategies are plotted inside the triangle.">
   {/* Triangle */}
-  <polygon points="220,24 30,330 410,330" fill="#f8f9fa" stroke="#d1d5db" strokeWidth="1.5"/>
+  <polygon points="220,24 30,330 410,330" fill="#f8f9fa" stroke="#d1d5db" stroke-width="1.5"/>
 
   {/* Corner labels */}
-  <text x="220" y="16" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a">Read speed</text>
-  <text x="10" y="348" textAnchor="start"  fontSize="12" fontWeight="700" fill="#1a1a1a">Write speed</text>
-  <text x="430" y="348" textAnchor="end"   fontSize="12" fontWeight="700" fill="#1a1a1a">Space</text>
+  <text x="220" y="16" text-anchor="middle" font-size="12" font-weight="700" fill="#1a1a1a">Read speed</text>
+  <text x="10" y="348" text-anchor="start"  font-size="12" font-weight="700" fill="#1a1a1a">Write speed</text>
+  <text x="430" y="348" text-anchor="end"   font-size="12" font-weight="700" fill="#1a1a1a">Space</text>
 
   {/* Subtitle */}
-  <text x="220" y="358" textAnchor="middle" fontSize="10" fill="#9ca3af">Closer to a corner = stronger on that axis</text>
+  <text x="220" y="358" text-anchor="middle" font-size="10" fill="#9ca3af">Closer to a corner = stronger on that axis</text>
 
   {/* ── Data points ── */}
 
   {/* 1. Minimal index (single-col B-tree) — balanced, slight read advantage */}
   <circle cx="220" cy="175" r="9" fill="#3b82f6" opacity="0.85"/>
-  <text x="230" y="162" fontSize="11" fill="#1d4ed8" fontWeight="600">Single-col B-tree</text>
-  <text x="230" y="174" fontSize="10" fill="#4b5563">balanced tradeoff</text>
+  <text x="230" y="162" font-size="11" fill="#1d4ed8" font-weight="600">Single-col B-tree</text>
+  <text x="230" y="174" font-size="10" fill="#4b5563">balanced tradeoff</text>
 
   {/* 2. Fat covering index — great reads, poor write speed, uses space */}
   <circle cx="305" cy="255" r="9" fill="#7c3aed" opacity="0.85"/>
-  <text x="315" y="242" fontSize="11" fill="#6d28d9" fontWeight="600">Fat covering index</text>
-  <text x="315" y="254" fontSize="10" fill="#4b5563">read↑ space↑ write↓</text>
+  <text x="315" y="242" font-size="11" fill="#6d28d9" font-weight="600">Fat covering index</text>
+  <text x="315" y="254" font-size="10" fill="#4b5563">read↑ space↑ write↓</text>
 
   {/* 3. Partial index — small, fast writes, selective reads */}
   <circle cx="155" cy="258" r="9" fill="#059669" opacity="0.85"/>
-  <text x="100" y="248" fontSize="11" fill="#047857" fontWeight="600">Partial index</text>
-  <text x="100" y="260" fontSize="10" fill="#4b5563">space↓ write cost↓</text>
+  <text x="100" y="248" font-size="11" fill="#047857" font-weight="600">Partial index</text>
+  <text x="100" y="260" font-size="10" fill="#4b5563">space↓ write cost↓</text>
 
   {/* 4. LSM-based store (no B-tree index) — write-optimized */}
   <circle cx="90" cy="305" r="9" fill="#d97706" opacity="0.85"/>
-  <text x="100" y="292" fontSize="11" fill="#92400e" fontWeight="600">LSM store</text>
-  <text x="100" y="304" fontSize="10" fill="#4b5563">write-optimized</text>
+  <text x="100" y="292" font-size="11" fill="#92400e" font-weight="600">LSM store</text>
+  <text x="100" y="304" font-size="10" fill="#4b5563">write-optimized</text>
 
-  {/* Legend note */}
-  <text x="10" y="20" fontSize="10" fill="#9ca3af">Illustrative — exact positions are qualitative.</text>
+  {/* Legend note (bottom-left, out of the way of corner labels) */}
+  <text x="10" y="385" font-size="9" fill="#9ca3af">Illustrative — exact positions are qualitative.</text>
 </svg>
 </div>
 

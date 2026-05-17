@@ -8,6 +8,7 @@ next: "/04-layers"
 ---
 
 import AttentionMatrix from '../components/AttentionMatrix.tsx';
+import AttentionWalkthrough from '../components/AttentionWalkthrough.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
 ## How tokens look at each other
@@ -28,6 +29,14 @@ To compute how much token *i* attends to token *j*: take the query of *i* and co
 
 Think of it like a soft search: the query is your search term, the keys are document titles, and the values are the document contents. You retrieve a blend of documents weighted by how well each title matches your search.
 
+## Walk through it interactively
+
+Forget matrices for a minute. Pick a query token below and click **Next** to advance through the five stages of attention one at a time — with the actual arithmetic done for you. Once the per-token version clicks, the matrix form is just "do this for every token at once."
+
+<AttentionWalkthrough client:load />
+
+The whole mechanism is just: **project to Q/K/V → dot product → softmax → weighted sum**. Every dimension you'd add in a real model (thousands of features, multiple attention heads, a `√d_head` divisor, layer normalization) is bookkeeping on top of this same five-step recipe.
+
 **Important:** Q, K, and V are *not* fixed properties stamped onto a token once and for all. They are computed by linear projections (learned weight matrices) applied to each token's representation *at a specific layer*. At layer 1, the representation feeding those projections comes from the embedding. At layer 2, it comes from the output of layer 1. Each layer produces its own Q, K, and V from its own inputs. A token's K and V at layer 3 are different numbers from its K and V at layer 2.
 
 ## The causal mask
@@ -41,22 +50,22 @@ This constraint is what makes the transformer useful for generation: the model i
 The grid below shows attention weights as a matrix. Rows are query tokens; columns are key tokens. Darker blue = higher weight. The hatched upper triangle is masked out — those positions are invisible to the query token in that row.
 
 <svg
-  viewBox="0 0 560 420"
+  viewBox="0 0 580 470"
   xmlns="http://www.w3.org/2000/svg"
   role="img"
   aria-label="Static attention weight matrix for the phrase: BOS The cat sat on the mat period"
-  style="max-width: 560px; width: 100%; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; display: block; margin: 1.5rem 0;"
+  style="max-width: 580px; width: 100%; height: auto; font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace; display: block; margin: 1.5rem 0;"
 >
   <title>Attention matrix diagram — illustrative</title>
   <desc>An 8×8 lower-triangular attention weight matrix for the tokens: BOS, The, cat, sat, on, the, mat, period. Blue shading encodes attention weight; upper triangle is hatched to show the causal mask.</desc>
 
   {/* Background */}
-  <rect width="560" height="420" fill="#f8f9fa" rx="6" />
+  <rect width="580" height="470" fill="#f8f9fa" rx="6" />
 
   {/* Define hatch pattern for masked cells */}
   <defs>
     <pattern id="hatch" patternUnits="userSpaceOnUse" width="6" height="6" patternTransform="rotate(45)">
-      <line x1="0" y1="0" x2="0" y2="6" stroke="#d1d5db" strokeWidth="2" />
+      <line x1="0" y1="0" x2="0" y2="6" stroke="#d1d5db" stroke-width="2" />
     </pattern>
   </defs>
 
@@ -70,8 +79,8 @@ The grid below shows attention weights as a matrix. Rows are query tokens; colum
       key={`col-${j}`}
       x={80 + j * 57 + 28}
       y={32}
-      textAnchor="middle"
-      fontSize="11"
+      text-anchor="middle"
+      font-size="11"
       fill="#374151"
     >{tok}</text>
   ))}
@@ -82,8 +91,8 @@ The grid below shows attention weights as a matrix. Rows are query tokens; colum
       key={`row-${i}`}
       x={72}
       y={60 + i * 44 + 26}
-      textAnchor="end"
-      fontSize="11"
+      text-anchor="end"
+      font-size="11"
       fill="#374151"
     >{tok}</text>
   ))}
@@ -172,14 +181,16 @@ The grid below shows attention weights as a matrix. Rows are query tokens; colum
   <rect x="479" y="320" width="52" height="40" rx="3" fill="url(#hatch)" />
 
   {/* Axis labels */}
-  <text x="310" y="415" textAnchor="middle" fontSize="11" fill="#6b7280">Key token (column) →</text>
-  <text x="14" y="220" textAnchor="middle" fontSize="11" fill="#6b7280" transform="rotate(-90,14,220)">Query token (row) ↑</text>
+  <text x="310" y="424" text-anchor="middle" font-size="11" fill="#6b7280">Key token (column) →</text>
+  <text x="14" y="230" text-anchor="middle" font-size="11" fill="#6b7280" transform="rotate(-90,14,230)">Query token (row) ↑</text>
 
-  {/* Legend */}
-  <rect x="82" y="408" width="14" height="10" rx="2" fill="rgba(59,130,246,0.65)" />
-  <text x="100" y="418" fontSize="10" fill="#6b7280">Attention weight</text>
-  <rect x="190" y="408" width="14" height="10" rx="2" fill="url(#hatch)" />
-  <text x="208" y="418" fontSize="10" fill="#6b7280">Causal mask (future)</text>
+  {/* Legend — sans-serif so it doesn't blow up in width like the monospace cells */}
+  <g font-family="system-ui, sans-serif">
+    <rect x="80" y="448" width="14" height="10" rx="2" fill="rgba(59,130,246,0.65)" />
+    <text x="100" y="458" font-size="11" fill="#6b7280">Attention weight</text>
+    <rect x="240" y="448" width="14" height="10" rx="2" fill="url(#hatch)" />
+    <text x="260" y="458" font-size="11" fill="#6b7280">Causal mask (future)</text>
+  </g>
 </svg>
 
 *Illustrative — weights are hand-authored for teaching, not from a real model.*

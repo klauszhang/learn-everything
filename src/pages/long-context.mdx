@@ -141,17 +141,17 @@ The diagram below illustrates the U-curve. Recall is higher at both ends of the 
 
   {/* Amber danger-zone: x 244 to 336, y from top (30) to baseline (195) */}
   <rect x="244" y="30" width="92" height="165" fill="#fef3c7" opacity="0.85" />
-  <text x="290" y="118" textAnchor="middle" fontSize="10" fill="#b45309" fontWeight="600">Middle</text>
-  <text x="290" y="130" textAnchor="middle" fontSize="10" fill="#b45309">danger zone</text>
+  <text x="290" y="118" text-anchor="middle" font-size="10" fill="#b45309" font-weight="600">Middle</text>
+  <text x="290" y="130" text-anchor="middle" font-size="10" fill="#b45309">danger zone</text>
 
   {/* Grid lines */}
-  <line x1="60" y1="63"  x2="520" y2="63"  stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
-  <line x1="60" y1="129" x2="520" y2="129" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
-  <line x1="60" y1="195" x2="520" y2="195" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
+  <line x1="60" y1="63"  x2="520" y2="63"  stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4,3" />
+  <line x1="60" y1="129" x2="520" y2="129" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4,3" />
+  <line x1="60" y1="195" x2="520" y2="195" stroke="#e5e7eb" stroke-width="1" stroke-dasharray="4,3" />
 
   {/* Axes */}
-  <line x1="60" y1="195" x2="520" y2="195" stroke="#9ca3af" strokeWidth="1.5" />
-  <line x1="60" y1="30"  x2="60"  y2="195" stroke="#9ca3af" strokeWidth="1.5" />
+  <line x1="60" y1="195" x2="520" y2="195" stroke="#9ca3af" stroke-width="1.5" />
+  <line x1="60" y1="30"  x2="60"  y2="195" stroke="#9ca3af" stroke-width="1.5" />
 
   {/* U-curve polyline
       x = 60 + position * 460
@@ -160,9 +160,9 @@ The diagram below illustrates the U-curve. Recall is higher at both ends of the 
   <polyline
     fill="none"
     stroke="#3b82f6"
-    strokeWidth="2.5"
-    strokeLinejoin="round"
-    strokeLinecap="round"
+    stroke-width="2.5"
+    stroke-linejoin="round"
+    stroke-linecap="round"
     points="60,60 83,66 106,76 129,89 152,109 175,129 198,146 221,159 244,169 267,175 290,179 313,172 336,162 359,146 382,126 405,103 428,86 451,73 474,63 520,56"
   />
 
@@ -172,28 +172,28 @@ The diagram below illustrates the U-curve. Recall is higher at both ends of the 
   <circle cx="290" cy="179" r="5" fill="#d97706" />
 
   {/* Y-axis labels */}
-  <text x="52" y="67"  textAnchor="end" fontSize="10" fill="#6b7280">90%</text>
-  <text x="52" y="133" textAnchor="end" fontSize="10" fill="#6b7280">70%</text>
-  <text x="52" y="199" textAnchor="end" fontSize="10" fill="#6b7280">50%</text>
+  <text x="52" y="67"  text-anchor="end" font-size="10" fill="#6b7280">90%</text>
+  <text x="52" y="133" text-anchor="end" font-size="10" fill="#6b7280">70%</text>
+  <text x="52" y="199" text-anchor="end" font-size="10" fill="#6b7280">50%</text>
 
   {/* X-axis labels */}
-  <text x="60"  y="210" textAnchor="middle" fontSize="10" fill="#6b7280">0%</text>
-  <text x="175" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">25%</text>
-  <text x="290" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">50%</text>
-  <text x="405" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">75%</text>
-  <text x="520" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">100%</text>
+  <text x="60"  y="210" text-anchor="middle" font-size="10" fill="#6b7280">0%</text>
+  <text x="175" y="210" text-anchor="middle" font-size="10" fill="#6b7280">25%</text>
+  <text x="290" y="210" text-anchor="middle" font-size="10" fill="#6b7280">50%</text>
+  <text x="405" y="210" text-anchor="middle" font-size="10" fill="#6b7280">75%</text>
+  <text x="520" y="210" text-anchor="middle" font-size="10" fill="#6b7280">100%</text>
 
   {/* Axis titles */}
-  <text x="290" y="230" textAnchor="middle" fontSize="11" fill="#6b7280">Position in context (start → end)</text>
-  <text x="16" y="115" textAnchor="middle" fontSize="11" fill="#6b7280" transform="rotate(-90,16,115)">Illustrative recall %</text>
+  <text x="290" y="230" text-anchor="middle" font-size="11" fill="#6b7280">Position in context (start → end)</text>
+  <text x="16" y="115" text-anchor="middle" font-size="11" fill="#6b7280" transform="rotate(-90,16,115)">Illustrative recall %</text>
 
   {/* Annotations at endpoints */}
-  <text x="60"  y="50" textAnchor="middle" fontSize="9" fill="#2563eb" fontWeight="600">Start</text>
-  <text x="60"  y="42" textAnchor="middle" fontSize="9" fill="#2563eb">higher recall</text>
-  <text x="520" y="46" textAnchor="middle" fontSize="9" fill="#2563eb" fontWeight="600">End</text>
-  <text x="520" y="38" textAnchor="middle" fontSize="9" fill="#2563eb">higher recall</text>
+  <text x="60"  y="50" text-anchor="middle" font-size="9" fill="#2563eb" font-weight="600">Start</text>
+  <text x="60"  y="42" text-anchor="middle" font-size="9" fill="#2563eb">higher recall</text>
+  <text x="520" y="46" text-anchor="middle" font-size="9" fill="#2563eb" font-weight="600">End</text>
+  <text x="520" y="38" text-anchor="middle" font-size="9" fill="#2563eb">higher recall</text>
 
-  <text x="290" y="250" textAnchor="middle" fontSize="9" fill="#9ca3af">Shape consistent with Liu et al. (2023). Numbers are illustrative — not measured on Claude.</text>
+  <text x="290" y="250" text-anchor="middle" font-size="9" fill="#9ca3af">Shape consistent with Liu et al. (2023). Numbers are illustrative — not measured on Claude.</text>
 </svg>
 
 <p className="lc-note">Illustrative diagram. The U-curve direction has been replicated qualitatively. The magnitude varies by model and task; current models may have moderated it.</p>

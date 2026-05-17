@@ -20,9 +20,9 @@ Tokenization uses a technique called **byte-pair encoding (BPE)**, a form of
 subword tokenization. The tokenizer learns which sequences of characters
 appear together most often in training data and merges them into a single
 token. Common words like "the" or "cat" end up as one token each. Rare or
-long words get split into smaller pieces. This lets a fixed vocabulary of
-tens of thousands of tokens cover virtually any text, including code,
-URLs, and foreign-language content.
+long words get split into smaller pieces. This lets a fixed vocabulary —
+around 100K tokens for modern frontier models — cover virtually any text,
+including code, URLs, and foreign-language content.
 
 ## A sentence broken into tokens
 

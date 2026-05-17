@@ -311,7 +311,7 @@ export default function RagDemo() {
       <div style={styles.legend}>
         <span style={styles.legendItem}>
           <span style={{ ...styles.swatch, background: "#fef3c7", border: "1.5px solid #f59e0b" }} />
-          Cached (stable) — amber = Ch 7 cache-semantic color
+          Cached (stable) — amber, same color as cached segments in Ch 7
         </span>
         <span style={styles.legendItem}>
           <span style={{ ...styles.swatch, background: "#f1f5f9", border: "1.5px solid #94a3b8" }} />

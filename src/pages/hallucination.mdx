@@ -58,19 +58,19 @@ The standard visualization is a reliability diagram: x-axis = bucketed stated co
   style={{ display: "block", maxWidth: "100%", margin: "1.5rem 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface)" }}
 >
   {/* Grid lines */}
-  <line x1="60" y1="254" x2="440" y2="254" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="60" y1="198" x2="440" y2="198" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="60" y1="142" x2="440" y2="142" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="60" y1="86"  x2="440" y2="86"  stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="60" y1="30"  x2="440" y2="30"  stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="136" y1="30" x2="136" y2="310" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="212" y1="30" x2="212" y2="310" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="288" y1="30" x2="288" y2="310" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="364" y1="30" x2="364" y2="310" stroke="#e5e7eb" strokeWidth="1" />
-  <line x1="440" y1="30" x2="440" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="60" y1="254" x2="440" y2="254" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="60" y1="198" x2="440" y2="198" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="60" y1="142" x2="440" y2="142" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="60" y1="86"  x2="440" y2="86"  stroke="#e5e7eb" stroke-width="1" />
+  <line x1="60" y1="30"  x2="440" y2="30"  stroke="#e5e7eb" stroke-width="1" />
+  <line x1="136" y1="30" x2="136" y2="310" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="212" y1="30" x2="212" y2="310" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="288" y1="30" x2="288" y2="310" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="364" y1="30" x2="364" y2="310" stroke="#e5e7eb" stroke-width="1" />
+  <line x1="440" y1="30" x2="440" y2="310" stroke="#e5e7eb" stroke-width="1" />
 
   {/* Perfect calibration diagonal */}
-  <line x1="60" y1="310" x2="440" y2="30" stroke="#9ca3af" strokeWidth="1.5" strokeDasharray="6 4" />
+  <line x1="60" y1="310" x2="440" y2="30" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4" />
 
   {/* Overconfident model curve — points at bucket midpoints
       conf midpoints: 0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95
@@ -80,8 +80,8 @@ The standard visualization is a reliability diagram: x-axis = bucketed stated co
     points="79,287.6 117,262.4 155,242.8 193,217.6 231,192.4 269,161.6 307,147.6 345,136.6 383,130.8 421,133.6"
     fill="none"
     stroke="#3b82f6"
-    strokeWidth="2.5"
-    strokeLinejoin="round"
+    stroke-width="2.5"
+    stroke-linejoin="round"
   />
 
   {/* Dots */}
@@ -97,43 +97,43 @@ The standard visualization is a reliability diagram: x-axis = bucketed stated co
   <circle cx="421" cy="133.6" r="4" fill="#3b82f6" />
 
   {/* Gap annotation at 90-100% bucket: diagonal at x=421 is y=310-(0.95*280)=43.6; model is at 133.6 */}
-  <line x1="421" y1="133.6" x2="421" y2="43.6" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="3 3" />
-  <text x="426" y="92"  fontSize="10" fill="#ef4444" fontFamily="system-ui,sans-serif">gap</text>
-  <text x="426" y="104" fontSize="9"  fill="#ef4444" fontFamily="system-ui,sans-serif">≈32 pp</text>
+  <line x1="421" y1="133.6" x2="421" y2="43.6" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="3 3" />
+  <text x="426" y="92"  font-size="10" fill="#ef4444" font-family="system-ui,sans-serif">gap</text>
+  <text x="426" y="104" font-size="9"  fill="#ef4444" font-family="system-ui,sans-serif">≈32 pp</text>
 
   {/* Axes */}
-  <line x1="60" y1="30"  x2="60"  y2="310" stroke="#6b7280" strokeWidth="1.5" />
-  <line x1="60" y1="310" x2="440" y2="310" stroke="#6b7280" strokeWidth="1.5" />
+  <line x1="60" y1="30"  x2="60"  y2="310" stroke="#6b7280" stroke-width="1.5" />
+  <line x1="60" y1="310" x2="440" y2="310" stroke="#6b7280" stroke-width="1.5" />
 
   {/* Y-axis labels */}
-  <text x="52" y="314" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">0%</text>
-  <text x="52" y="258" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">20%</text>
-  <text x="52" y="202" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">40%</text>
-  <text x="52" y="146" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">60%</text>
-  <text x="52" y="90"  textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">80%</text>
-  <text x="52" y="34"  textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">100%</text>
+  <text x="52" y="314" text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">0%</text>
+  <text x="52" y="258" text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">20%</text>
+  <text x="52" y="202" text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">40%</text>
+  <text x="52" y="146" text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">60%</text>
+  <text x="52" y="90"  text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">80%</text>
+  <text x="52" y="34"  text-anchor="end" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">100%</text>
 
   {/* X-axis labels */}
-  <text x="60"  y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">0%</text>
-  <text x="136" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">20%</text>
-  <text x="212" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">40%</text>
-  <text x="288" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">60%</text>
-  <text x="364" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">80%</text>
-  <text x="440" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">100%</text>
+  <text x="60"  y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">0%</text>
+  <text x="136" y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">20%</text>
+  <text x="212" y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">40%</text>
+  <text x="288" y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">60%</text>
+  <text x="364" y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">80%</text>
+  <text x="440" y="324" text-anchor="middle" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">100%</text>
 
   {/* Axis titles */}
-  <text x="250" y="344" textAnchor="middle" fontSize="11" fill="#374151" fontFamily="system-ui,sans-serif">Stated confidence</text>
-  <text x="12"  y="170" textAnchor="middle" fontSize="11" fill="#374151" fontFamily="system-ui,sans-serif" transform="rotate(-90 12 170)">Actual accuracy</text>
+  <text x="250" y="344" text-anchor="middle" font-size="11" fill="#374151" font-family="system-ui,sans-serif">Stated confidence</text>
+  <text x="12"  y="170" text-anchor="middle" font-size="11" fill="#374151" font-family="system-ui,sans-serif" transform="rotate(-90 12 170)">Actual accuracy</text>
 
   {/* Legend */}
-  <line x1="68" y1="48" x2="92" y2="48" stroke="#9ca3af" strokeWidth="1.5" strokeDasharray="6 4" />
-  <text x="96" y="52" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">Perfect calibration (diagonal)</text>
-  <line x1="68" y1="64" x2="92" y2="64" stroke="#3b82f6" strokeWidth="2.5" />
+  <line x1="68" y1="48" x2="92" y2="48" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4" />
+  <text x="96" y="52" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">Perfect calibration (diagonal)</text>
+  <line x1="68" y1="64" x2="92" y2="64" stroke="#3b82f6" stroke-width="2.5" />
   <circle cx="80" cy="64" r="3.5" fill="#3b82f6" />
-  <text x="96" y="68" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">Instruction-tuned model (illustrative)</text>
+  <text x="96" y="68" font-size="10" fill="#6b7280" font-family="system-ui,sans-serif">Instruction-tuned model (illustrative)</text>
 
   {/* Note */}
-  <text x="60" y="355" fontSize="8.5" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — not real model output. Shape reflects documented overconfidence in post-RLHF models (Kadavath et al. 2022; arXiv 2410.09724).</text>
+  <text x="60" y="355" font-size="8.5" fill="#9ca3af" font-family="system-ui,sans-serif">Illustrative — not real model output. Shape reflects documented overconfidence in post-RLHF models (Kadavath et al. 2022; arXiv 2410.09724).</text>
 </svg>
 
 The diagram makes the problem concrete: the model says 90–100% confident but is right only about 63% of the time at that stated level. The overconfidence effect is strongest in the high-confidence bins.

@@ -12,7 +12,7 @@ import CacheCallout from '../components/CacheCallout.astro';
 
 The model never operates on raw text. After tokenization, each token is just a number — an ID from the vocabulary. The first thing the model does is look that ID up in a large table and retrieve a fixed vector of numbers called an **embedding**. That vector is the model's starting representation of the token.
 
-Because the embedding table is fixed after training, the same token ID always returns the same vector. Token 4721 (`"king"`) maps to exactly the same 12,288 numbers every single time, regardless of what text surrounds it. This is the **embedding layer's determinism**: one token in, one fixed vector out.
+Because the embedding table is fixed after training, the same token ID always returns the same vector. Token 4721 (`"king"`) maps to exactly the same vector — on the order of ~10K numbers for frontier-scale models (12,288 is a common illustrative figure) — every single time, regardless of what text surrounds it. This is the **embedding layer's determinism**: one token in, one fixed vector out.
 
 ## Meaning lives in geometry
 
@@ -22,62 +22,62 @@ The diagram below compresses those high-dimensional relationships into 2D. Real 
 
 {/* Inline SVG — static illustration of semantic clusters */}
 <svg
-  viewBox="0 0 480 320"
-  width="480"
-  height="320"
+  viewBox="0 0 560 360"
+  width="560"
+  height="360"
   xmlns="http://www.w3.org/2000/svg"
   aria-label="Illustrative 2D embedding scatter: royalty, gender, animal, and science word clusters"
   style={{ display: "block", maxWidth: "100%", margin: "1.5rem 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface)" }}
 >
   {/* ── Cluster outlines ─────────────────────────────── */}
-  <ellipse cx="100" cy="90"  rx="58" ry="38" fill="#6366f1" opacity="0.08" />
-  <ellipse cx="200" cy="185" rx="44" ry="30" fill="#10b981" opacity="0.08" />
-  <ellipse cx="375" cy="85"  rx="55" ry="36" fill="#f97316" opacity="0.08" />
-  <ellipse cx="375" cy="250" rx="55" ry="34" fill="#8b5cf6" opacity="0.08" />
+  <ellipse cx="110" cy="110" rx="66" ry="42" fill="#6366f1" opacity="0.10" />
+  <ellipse cx="240" cy="210" rx="56" ry="34" fill="#10b981" opacity="0.10" />
+  <ellipse cx="420" cy="105" rx="62" ry="40" fill="#f97316" opacity="0.10" />
+  <ellipse cx="420" cy="280" rx="66" ry="40" fill="#8b5cf6" opacity="0.10" />
 
-  {/* ── Cluster labels ───────────────────────────────── */}
-  <text x="100" y="44"  textAnchor="middle" fontSize="11" fill="#6366f1" opacity="0.7" fontFamily="system-ui,sans-serif">royalty</text>
-  <text x="200" y="148" textAnchor="middle" fontSize="11" fill="#10b981" opacity="0.7" fontFamily="system-ui,sans-serif">gender</text>
-  <text x="375" y="40"  textAnchor="middle" fontSize="11" fill="#f97316" opacity="0.7" fontFamily="system-ui,sans-serif">animal</text>
-  <text x="375" y="208" textAnchor="middle" fontSize="11" fill="#8b5cf6" opacity="0.7" fontFamily="system-ui,sans-serif">science</text>
+  {/* ── Cluster labels (placed clearly above each cluster, with breathing room) ─ */}
+  <text x="110" y="48"  text-anchor="middle" font-size="13" font-weight="600" fill="#6366f1" opacity="0.85" font-family="system-ui,sans-serif">royalty</text>
+  <text x="240" y="158" text-anchor="middle" font-size="13" font-weight="600" fill="#10b981" opacity="0.85" font-family="system-ui,sans-serif">gender</text>
+  <text x="420" y="42"  text-anchor="middle" font-size="13" font-weight="600" fill="#f97316" opacity="0.85" font-family="system-ui,sans-serif">animal</text>
+  <text x="420" y="226" text-anchor="middle" font-size="13" font-weight="600" fill="#8b5cf6" opacity="0.85" font-family="system-ui,sans-serif">science</text>
 
-  {/* ── Royalty cluster ──────────────────────────────── */}
-  <circle cx="72"  cy="88" r="7" fill="#6366f1" opacity="0.85" />
-  <text   x="72"  y="76"  textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">king</text>
+  {/* ── Royalty cluster — labels offset to avoid each other ── */}
+  <circle cx="80"  cy="115" r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="56"  y="119" text-anchor="end" font-size="12" fill="#3730a3" font-family="system-ui,sans-serif">king</text>
 
-  <circle cx="108" cy="100" r="7" fill="#6366f1" opacity="0.85" />
-  <text   x="108" y="88"   textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">queen</text>
+  <circle cx="120" cy="135" r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="144" y="139" text-anchor="start" font-size="12" fill="#3730a3" font-family="system-ui,sans-serif">queen</text>
 
-  <circle cx="130" cy="78"  r="7" fill="#6366f1" opacity="0.85" />
-  <text   x="130" y="66"   textAnchor="middle" fontSize="12" fill="#3730a3" fontFamily="system-ui,sans-serif">prince</text>
+  <circle cx="155" cy="100"  r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="170" y="104" text-anchor="start" font-size="12" fill="#3730a3" font-family="system-ui,sans-serif">prince</text>
 
-  {/* ── Gender cluster ───────────────────────────────── */}
-  <circle cx="182" cy="190" r="7" fill="#10b981" opacity="0.85" />
-  <text   x="182" y="178"  textAnchor="middle" fontSize="12" fill="#065f46" fontFamily="system-ui,sans-serif">man</text>
+  {/* ── Gender cluster ── */}
+  <circle cx="218" cy="220" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="195" y="224" text-anchor="end" font-size="12" fill="#065f46" font-family="system-ui,sans-serif">man</text>
 
-  <circle cx="218" cy="178" r="7" fill="#10b981" opacity="0.85" />
-  <text   x="218" y="166"  textAnchor="middle" fontSize="12" fill="#065f46" fontFamily="system-ui,sans-serif">woman</text>
+  <circle cx="265" cy="200" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="282" y="204" text-anchor="start" font-size="12" fill="#065f46" font-family="system-ui,sans-serif">woman</text>
 
-  {/* ── Animal cluster ───────────────────────────────── */}
-  <circle cx="348" cy="88" r="7" fill="#f97316" opacity="0.85" />
-  <text   x="348" y="76"  textAnchor="middle" fontSize="12" fill="#9a3412" fontFamily="system-ui,sans-serif">cat</text>
+  {/* ── Animal cluster ── */}
+  <circle cx="395" cy="115" r="7" fill="#f97316" opacity="0.85" />
+  <text   x="370" y="119" text-anchor="end" font-size="12" fill="#9a3412" font-family="system-ui,sans-serif">cat</text>
 
-  <circle cx="400" cy="96" r="7" fill="#f97316" opacity="0.85" />
-  <text   x="400" y="84"  textAnchor="middle" fontSize="12" fill="#9a3412" fontFamily="system-ui,sans-serif">dog</text>
+  <circle cx="450" cy="100"  r="7" fill="#f97316" opacity="0.85" />
+  <text   x="465" y="104" text-anchor="start" font-size="12" fill="#9a3412" font-family="system-ui,sans-serif">dog</text>
 
-  {/* ── Science cluster ──────────────────────────────── */}
-  <circle cx="352" cy="252" r="7" fill="#8b5cf6" opacity="0.85" />
-  <text   x="352" y="240" textAnchor="middle" fontSize="12" fill="#4c1d95" fontFamily="system-ui,sans-serif">atom</text>
+  {/* ── Science cluster ── */}
+  <circle cx="395" cy="292" r="7" fill="#8b5cf6" opacity="0.85" />
+  <text   x="370" y="296" text-anchor="end" font-size="12" fill="#4c1d95" font-family="system-ui,sans-serif">atom</text>
 
-  <circle cx="398" cy="244" r="7" fill="#8b5cf6" opacity="0.85" />
-  <text   x="398" y="232" textAnchor="middle" fontSize="12" fill="#4c1d95" fontFamily="system-ui,sans-serif">gravity</text>
+  <circle cx="450" cy="278" r="7" fill="#8b5cf6" opacity="0.85" />
+  <text   x="465" y="282" text-anchor="start" font-size="12" fill="#4c1d95" font-family="system-ui,sans-serif">gravity</text>
 
-  {/* ── Solo token ───────────────────────────────────── */}
-  <circle cx="240" cy="272" r="7" fill="#6b7280" opacity="0.75" />
-  <text   x="240" y="260" textAnchor="middle" fontSize="12" fill="#374151" fontFamily="system-ui,sans-serif">one</text>
+  {/* ── Solo token ── */}
+  <circle cx="275" cy="310" r="7" fill="#6b7280" opacity="0.75" />
+  <text   x="275" y="296" text-anchor="middle" font-size="12" fill="#374151" font-family="system-ui,sans-serif">one</text>
 
-  {/* ── Illustrative note ────────────────────────────── */}
-  <text x="8" y="314" fontSize="9" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — 2D projection of a high-dimensional embedding space. Not real model output.</text>
+  {/* ── Illustrative note ── */}
+  <text x="14" y="346" font-size="10" fill="#9ca3af" font-family="system-ui,sans-serif">Illustrative — not real model output.</text>
 </svg>
 
 ## An important boundary: the embedding layer vs. later layers
@@ -95,7 +95,7 @@ Hover any point to inspect its (truncated, 6-dimensional) vector and its nearest
 <CacheCallout>
   **Same token ID → same embedding-layer vector, always.** The embedding lookup is a pure table read: no context, no history, no randomness. Token 4721 always retrieves the same row. This determinism — at the embedding layer *and* at every layer above it, when the prefix is held fixed — is the foundation that makes prefix caching possible at the API level.
 
-  **After layer 1, the representation is context-dependent.** Attention mixes each token's representation with every other token in the sequence. From layer 1 onward, what the model "thinks about" a token depends on its neighbors. The prompt cache doesn't store embeddings — it stores the **per-layer K and V tensors** computed for a specific sequence of tokens together (you'll see this in Ch 6). What stays cacheable is the work that depends only on the prefix tokens, not "the model's view of a word" in isolation.
+  **After layer 1, the representation is context-dependent.** Attention mixes each token's representation with every other token in the sequence. From layer 1 onward, what the model "thinks about" a token depends on its neighbors. The mental model for what gets cached: the per-layer **K and V tensors** computed for a specific sequence of tokens together (you'll see this in Ch 6) — not the input embeddings themselves, and not "the model's view of a word" in isolation. What stays cacheable is the work that depends only on the prefix tokens.
 </CacheCallout>
 
 <style>{`

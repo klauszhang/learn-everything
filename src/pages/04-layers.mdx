@@ -140,6 +140,43 @@ The diagram below shows six layers (a simplified slice; real models have many mo
   }
 `}</style>
 
+## What the FFN actually is
+
+Each block has two sub-modules: attention (Ch 3) and **FFN**, the *feed-forward network*. Despite the name, it's just two matrix multiplications with a nonlinearity in between, applied independently to every token:
+
+```
+FFN(x) = W₂ · σ(W₁·x + b₁) + b₂
+```
+
+where `x` is one token's residual-stream vector and `σ` is a nonlinearity (ReLU, GELU, SwiGLU). Two properties matter:
+
+- **No mixing between tokens.** The FFN sees one token at a time. Token-to-token mixing is attention's job; the FFN's job is "now that you've gathered context, think about it."
+- **Up-project, then down-project.** `W₁` expands `d_model` → `d_ffn` (typically 4× wider). `σ` adds nonlinearity. `W₂` projects back to `d_model`. The wide middle is where the bulk of model parameters live — usually ~2/3 of each layer. When people say "70B parameters," most of those are FFN weights.
+
+### Worked example (d_model = 2, d_ffn = 4)
+
+```
+x = [1, 0]                          ← one token's residual vector
+
+W₁ = [ 1  0   1  -1 ]               (2 × 4: project up)
+     [ 0  1  -1   1 ]
+b₁ = [ 0, 0, 0, 0 ]
+
+W₁·x + b₁ = [1, 0, 1, -1]
+σ = ReLU  → [1, 0, 1,  0]           ← negatives clipped to zero
+
+W₂ = [ 1  0 ]                       (4 × 2: project down)
+     [ 1  0 ]
+     [ 0  1 ]
+     [ 0  1 ]
+
+FFN(x) = W₂ · [1,0,1,0] = [1, 1]
+```
+
+That `[1, 1]` is then *added* to the original `x` via the residual connection before flowing into the next layer. Attention says "look around"; FFN says "now process what you saw."
+
+Mechanistic-interpretability work has tied individual FFN hidden units to recognizable patterns — neurons that fire on French verbs, on hex color codes, on Python list comprehensions. The FFN is where most of the model's stored *knowledge* is thought to live, while attention handles the routing.
+
 ## What do different layers actually learn?
 
 This is one of the most active and genuinely open research questions in mechanistic interpretability. It's tempting to say something like "early layers handle syntax, middle layers handle meaning, late layers handle task reasoning" — but that tidy story isn't well-supported by the evidence.
