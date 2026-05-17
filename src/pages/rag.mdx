@@ -4,7 +4,7 @@ title: "RAG — Retrieval-Augmented Generation"
 chapterNumber: null
 takeaway: "RAG grounds model answers in your documents by searching first and generating second — and how you assemble the prompt after retrieval determines both answer quality and prompt-cache efficiency."
 prev: "/vector-search"
-next: ""
+next: "/ann-vector-indexes"
 ---
 
 import RagDemo from '../components/RagDemo.tsx';
@@ -197,7 +197,7 @@ RAG changes documents, not weights. A new document can be retrievable in seconds
 
 ### Context windows are large, but not the answer
 
-As of 2026, Claude supports a context window of up to 200,000 tokens. But stuffing an entire knowledge base into every request isn't a solution: every input token is billed, time-to-first-token scales with prefill length, and model attention over very early content degrades at extreme lengths. RAG uses a smaller, targeted context — the chunks that actually matter — rather than the entire corpus. And as the closing section of this chapter explains, this also has important implications for what can and cannot benefit from the prompt cache.
+Claude's context window has grown into the hundreds of thousands of tokens — and up to 1M for some models — which sounds like it makes retrieval optional. It doesn't. Every input token is billed on every request, time-to-first-token scales with prefill length, and model attention over very early content degrades at extreme lengths. RAG uses a smaller, targeted context — the chunks that actually matter — rather than the entire corpus. And as the closing section of this chapter explains, this also has important implications for what can and cannot benefit from the prompt cache.
 
 ---
 
