@@ -2,15 +2,249 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Sampling"
 chapterNumber: null
-takeaway: "Temperature, top-p, top-k — what the dials actually do to the next-token distribution, and what Anthropic exposes in 2026."
+takeaway: "Temperature reshapes the next-token distribution before a single token is drawn. Anthropic's API exposes only temperature (0.0–1.0). temperature=0 is not deterministic."
 prev: "/indexing-strategies"
 next: "/tool-use"
 ---
 
+import SamplingDials from '../components/SamplingDials.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/sampling.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+## Same prompt, different answers — why?
+
+You send Claude the exact same message twice. The first response opens one way; the second opens another. The model didn't change its mind. It didn't forget. It ran essentially the same computation both times and reached roughly the same probability distribution — then the **sampler** drew a different token from that distribution. That single different first token started a different branch, and everything that followed diverged from there.
+
+Understanding that picking step — what shapes it, what controls it — is this chapter's job.
+
+## From logits to a token
+
+Every time the model needs to produce a token, its final layer outputs a large vector of raw scores called **logits** — one per vocabulary entry. A real model's vocabulary spans 32,000–128,000 tokens, so this is a very large vector. Logits are not probabilities: they can be any number, positive or negative, with no constraint on their sum.
+
+To turn logits into a proper probability distribution, the model applies **softmax** — the one formula this chapter uses:
+
+<div class="samp-formula">
+  P(token <em>i</em>) = exp(logit<sub>i</sub> / T) &nbsp;/&nbsp; Σ<sub>j</sub> exp(logit<sub>j</sub> / T)
+</div>
+
+Read it plainly: divide every logit by the temperature *T*, exponentiate, then normalize so everything sums to 1. When T = 1 (the default), you get the model's raw probability distribution. When T differs, the shape of that distribution shifts — and that shift is what the dials control.
+
+Once you have a probability distribution, **sampling** is conceptually simple: imagine a biased die with one face per vocabulary token, where heavier faces correspond to higher probabilities. Roll it once. The token that comes up is appended to the sequence, and the cycle repeats.
+
+## Worked example: two tokens, three temperatures
+
+Suppose the model assigns logit 3.0 to token A and logit 1.0 to token B. Here is what softmax produces at three temperatures:
+
+<div class="samp-worked">
+  <table class="samp-table">
+    <thead>
+      <tr>
+        <th>Temperature</th>
+        <th>Token A probability</th>
+        <th>Token B probability</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>T = 1.0 (default)</td>
+        <td><strong>88%</strong></td>
+        <td>12%</td>
+      </tr>
+      <tr>
+        <td>T = 0.5 (sharper)</td>
+        <td><strong>98%</strong></td>
+        <td>2%</td>
+      </tr>
+      <tr>
+        <td>T = 2.0 (flatter)</td>
+        <td><strong>73%</strong></td>
+        <td>27%</td>
+      </tr>
+    </tbody>
+  </table>
+  <p class="samp-table-note">Logits: A = 3.0, B = 1.0. Computed via the softmax formula above. <em>Illustrative.</em></p>
+</div>
+
+Lower temperature amplifies the gap between tokens — token B goes from a 12% shot to a 2% shot. Higher temperature compresses it — token B goes from 12% to 27%. The model's underlying preference (A > B) never changed. Only the degree of confidence expressed in the distribution changed.
+
+## The distribution over "The cat sat on the ___"
+
+Before touching any controls, here is a static snapshot of what a next-token distribution looks like for a short prefix. In a real model this bar chart has 32,000+ bars; we show 10 for clarity.
+
+<div class="samp-svg-wrap" aria-label="Bar chart: next-token probabilities for 'The cat sat on the ___' at T=1.0 (illustrative)">
+  <svg viewBox="0 0 560 220" class="samp-svg" role="img" aria-hidden="true">
+    <line x1="48" y1="10" x2="48" y2="170" stroke="#e5e7eb" strokeWidth="1"/>
+    <line x1="48" y1="170" x2="544" y2="170" stroke="#e5e7eb" strokeWidth="1"/>
+    <line x1="48" y1="130" x2="544" y2="130" stroke="#f3f4f6" strokeWidth="1" strokeDasharray="4 3"/>
+    <line x1="48" y1="90"  x2="544" y2="90"  stroke="#f3f4f6" strokeWidth="1" strokeDasharray="4 3"/>
+    <line x1="48" y1="50"  x2="544" y2="50"  stroke="#f3f4f6" strokeWidth="1" strokeDasharray="4 3"/>
+    <text x="42" y="173" textAnchor="end" fontSize="10" fill="#6b7280">0%</text>
+    <text x="42" y="133" textAnchor="end" fontSize="10" fill="#6b7280">25%</text>
+    <text x="42" y="93"  textAnchor="end" fontSize="10" fill="#6b7280">50%</text>
+    <text x="42" y="53"  textAnchor="end" fontSize="10" fill="#6b7280">75%</text>
+    <rect x="56"  y="88"  width="38" height="82" fill="#3b82f6" rx="2"/>
+    <text x="75"  y="83"  textAnchor="middle" fontSize="9" fill="#3b82f6">51%</text>
+    <text x="75"  y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">mat</text>
+    <rect x="106" y="144" width="38" height="26" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="125" y="139" textAnchor="middle" fontSize="9" fill="#6b7280">16%</text>
+    <text x="125" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">floor</text>
+    <rect x="156" y="152" width="38" height="18" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="175" y="147" textAnchor="middle" fontSize="9" fill="#6b7280">11%</text>
+    <text x="175" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">couch</text>
+    <rect x="206" y="160" width="38" height="10" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="225" y="155" textAnchor="middle" fontSize="9" fill="#6b7280">6%</text>
+    <text x="225" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">roof</text>
+    <rect x="256" y="162" width="38" height="8" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="275" y="157" textAnchor="middle" fontSize="9" fill="#6b7280">5%</text>
+    <text x="275" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">table</text>
+    <rect x="306" y="165" width="38" height="5" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="325" y="160" textAnchor="middle" fontSize="9" fill="#6b7280">3%</text>
+    <text x="325" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">stairs</text>
+    <rect x="356" y="167" width="38" height="3" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="375" y="162" textAnchor="middle" fontSize="9" fill="#6b7280">2%</text>
+    <text x="375" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">fence</text>
+    <rect x="406" y="168" width="38" height="2" fill="#dbeafe" stroke="#3b82f6" strokeWidth="1" rx="2"/>
+    <text x="425" y="163" textAnchor="middle" fontSize="9" fill="#6b7280">1%</text>
+    <text x="425" y="185" textAnchor="middle" fontSize="9" fill="#1a1a1a" fontFamily="ui-monospace,monospace">keyboard</text>
+
+    <rect x="456" y="169" width="38" height="1" fill="#f3f4f6" stroke="#e5e7eb" strokeWidth="1" rx="2"/>
+    <text x="475" y="164" textAnchor="middle" fontSize="9" fill="#9ca3af">&lt;1%</text>
+    <text x="475" y="185" textAnchor="middle" fontSize="9" fill="#9ca3af" fontFamily="ui-monospace,monospace">moon</text>
+    <rect x="506" y="169" width="38" height="1" fill="#f3f4f6" stroke="#e5e7eb" strokeWidth="1" rx="2"/>
+    <text x="525" y="164" textAnchor="middle" fontSize="9" fill="#9ca3af">&lt;1%</text>
+    <text x="525" y="185" textAnchor="middle" fontSize="9" fill="#9ca3af" fontFamily="ui-monospace,monospace">concept</text>
+    <text x="296" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">T = 1.0 — illustrative logits, not a real model</text>
+  </svg>
+</div>
+
+## The temperature dial in action
+
+Move the slider below to see how temperature reshapes this distribution in real time.
+
+<SamplingDials client:visible />
+
+## The dials — how they work
+
+**Temperature** is the central parameter. It divides every logit by T before softmax runs. At T = 1.0 (the API default), the distribution is the model's raw output. Below 1.0, logit differences are amplified — the most probable token dominates more. Above 1.0, differences shrink — lower-ranked tokens become more competitive.
+
+Think of it as a dial between *decisive* (low T) and *exploratory* (high T). It is not a dial between good and bad. Low temperature on a creative brainstorm produces mechanical repetition. High temperature on a JSON extraction task risks garbled output.
+
+**Top-K** prunes the distribution to the K most probable tokens before sampling. After computing softmax, every token outside the top K is zeroed out and the remaining probabilities are renormalized. If K = 1, only the argmax survives — equivalent to greedy. If K = 50, at most 50 tokens can be chosen regardless of how the distribution is shaped. Top-K is widely used in open-source inference tools (vLLM, llama.cpp, Hugging Face) but is not exposed in the Anthropic Messages API.
+
+**Top-P (nucleus sampling)** solves top-K's inflexibility. Instead of a fixed count, you walk the sorted distribution from highest to lowest probability and stop once the cumulative sum reaches P. Keep only the tokens you visited. When the model is confident, a small nucleus reaches P quickly. When the model is uncertain, more tokens are needed. The nucleus adapts automatically to the distribution shape. Top-P is also not exposed as a public parameter in the Anthropic Messages API.
+
+**Min-P** is a newer approach available in some open-source frameworks (llama.cpp, vLLM). It sets a floor at `min_p × max_probability` — any token below that floor is discarded. This anchors the eligibility threshold to the model's confidence level, which helps at high temperatures. Not available in the Anthropic API.
+
+### What Anthropic actually exposes
+
+The Anthropic Messages API (2026) exposes **only `temperature`**, with a range of 0.0 to 1.0. Top-P, top-K, repetition penalties, and min-P are not public parameters. This is a deliberate design choice: one well-understood lever is more predictable than several interacting ones.
+
+## Three misconceptions to correct
+
+### "temperature=0 is deterministic"
+
+This is the most consequential misconception. The reasoning sounds tight: at T = 0 the distribution collapses to argmax; there is only one most-probable token; no randomness remains. In practice it is not reliable.
+
+Modern inference runs on GPUs with parallel floating-point operations. The order of operations in parallel sums affects floating-point results due to rounding. Two logits that should be identical can differ by a tiny amount. When two tokens are near-tied, that rounding difference can flip the argmax.
+
+Providers also batch requests — multiple users' prompts are processed together for throughput. Batching changes the computation graph, which changes the floating-point results.
+
+**Anthropic states this explicitly in their API documentation:** "Note that even with temperature of 0.0, the results will not be fully deterministic." (Source: Anthropic Messages API reference, confirmed 2026-05-17.)
+
+In practice, `temperature=0` gives you *highly consistent* outputs — almost always the same answer. But if you build an evaluation pipeline that breaks on any token-level difference between runs, you will get false failures. Use temperature=0 for consistency, not for bit-identical reproducibility.
+
+### "Higher temperature = more creative"
+
+Higher temperature means more *random*, not more *creative*. Randomness and creativity are not the same thing. Creativity is a property of the model's knowledge and reasoning — it lives in the weights, shaped by training. Temperature only controls how far the sampler is willing to reach from the center of the probability distribution.
+
+A well-trained model at temperature 0.7 will produce more interesting output than a weak model at temperature 2.0, because the high-temperature weak model is mostly producing noise from the flat parts of its distribution. The training ceiling is fixed; temperature just determines how close to — or how far below — that ceiling you sample.
+
+Higher temperature is better described as: more willing to try the model's second and third choices. Those choices are sometimes surprising in a useful way, and sometimes just wrong.
+
+### "Temperature changes what the model knows"
+
+The logits are computed from a complete forward pass through all the model's layers before temperature ever gets involved. Temperature is applied *during sampling*, after the forward pass is done. The model's opinion about every next token is identical at any temperature — you are only changing how you read that opinion.
+
+If the model's forward pass says "mat" is the most likely completion, that judgment does not change at temperature 2.0. What changes is that "moon" and "concept" now have a better chance of being drawn. The model still considers them less likely; you have simply told the sampler to be more willing to reach for less likely options.
+
+## When to reach for the dial
+
+**Use low temperature (0.0–0.3)** for structured output (JSON, YAML, CSV), data extraction, classification, and multiple-choice tasks. There is usually one correct answer; divergence from it is error, not creativity.
+
+**Use medium temperature (0.5–0.8)** for conversational responses, summarization, and factual Q&A where phrasing matters. You want the right answer with natural prose, not robotic repetition.
+
+**Use higher temperature (0.8–1.0)** for brainstorming, creative writing, and ideation. The model's second and third choices are what you are looking for; the most probable continuation of a creative prompt is often the cliché.
+
+One underused strategy: instead of tuning temperature to balance consistency and diversity, run multiple calls at a moderate temperature and compare. The diversity comes from independent samples; judgment selects the best. For high-stakes content — a critical email, a legal summary, production code — generating two or three alternatives is often more effective than optimizing a single temperature value.
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/sampling.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+  <p>Sampling does not affect cache eligibility. The cache key is the input prefix — the exact bytes that precede the sampling step. Whether temperature is 0.1 or 1.0 does not change what gets cached or whether a cache hit occurs.</p>
+  <p>What sampling <em>does</em> affect is output identity. A perfect cache hit means the expensive prefix computation was reused exactly. But the sampler still runs fresh on every request, drawing from the same distribution and potentially picking a different token. The cache makes your costs lower; it does not make your outputs deterministic.</p>
+  <p>The practical implication: if you rely on a cached prefix for consistent responses, also use low temperature. A cache hit guarantees prefix reuse, not output stability. Both levers together — stable prefix plus low temperature — give you the most repeatable results.</p>
 </CacheCallout>
+
+<style>{`
+  .samp-formula {
+    font-size: 1rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-6);
+    margin: var(--space-4) 0;
+    max-width: var(--content-max);
+    font-family: var(--font-mono);
+    line-height: 2;
+  }
+
+  .samp-svg-wrap {
+    max-width: var(--content-max);
+    margin: var(--space-6) 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: var(--space-4);
+  }
+
+  .samp-svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+
+  .samp-worked {
+    max-width: var(--content-max);
+    margin: var(--space-4) 0;
+    overflow-x: auto;
+  }
+
+  .samp-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.92rem;
+  }
+
+  .samp-table th,
+  .samp-table td {
+    text-align: left;
+    padding: var(--space-2) var(--space-4);
+    border: 1px solid var(--color-border);
+  }
+
+  .samp-table th {
+    background: var(--color-surface);
+    font-weight: 600;
+    color: var(--color-muted);
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .samp-table tr:first-child td {
+    background: var(--color-accent-soft);
+  }
+
+  .samp-table-note {
+    margin: var(--space-2) 0 0;
+    font-size: 0.78rem;
+    color: var(--color-muted);
+  }
+`}</style>
