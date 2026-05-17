@@ -2,15 +2,362 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Extended thinking"
 chapterNumber: null
-takeaway: "Reasoning mode is just more output tokens. When that's worth the cost, when it isn't, and what it does to the cache."
+takeaway: "Thinking tokens are output tokens — same model, same price, more time before the answer. Know when they earn their cost."
 prev: "/tool-use"
 next: "/streaming"
 ---
 
+import ThinkingBudget from '../components/ThinkingBudget.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/extended-thinking.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+## What is the pause?
+
+Sometimes you send Claude a hard question and a "Thinking…" section appears before the actual answer arrives. What is happening in there?
+
+The short answer: nothing hidden. Claude is generating tokens — the same one-at-a-time autoregressive loop described in Chapter 5 — but those tokens are tagged as `type: "thinking"` rather than `type: "text"`. The same model, the same forward passes, the same decoder. What changes is that the model is explicitly given budget to write out intermediate steps before committing to a final answer.
+
+There is no second model, no parallel inference engine, no inner life inaccessible to the API. Every thinking token appears (or is at minimum billed) as normal output. The mechanism is identical to ordinary generation; the consequence — fewer errors on multi-step tasks — is real.
+
+## The same decoder, a different label
+
+In Chapter 5 terms: **prefill** still runs once (your prompt through all layers in a single pass). **Decode** is where thinking lives. With thinking enabled the decode sequence splits into two labeled phases:
+
+<div class="et-timeline-diagram" role="img" aria-label="Token-by-token timeline for a request with extended thinking (illustrative)">
+  <div class="et-timeline__row et-timeline__row--header">
+    <div class="et-timeline__phase-label"></div>
+    <div class="et-timeline__track-label">Token stream (left to right = time)</div>
+  </div>
+
+  <div class="et-timeline__row">
+    <div class="et-timeline__phase-label">With thinking</div>
+    <div class="et-timeline__track">
+      <div class="et-timeline__segment et-timeline__segment--input">
+        <span>Prompt tokens</span>
+        <span class="et-seg-note">input · prefill · 1 pass</span>
+      </div>
+      <div class="et-timeline__arrow">→</div>
+      <div class="et-timeline__segment et-timeline__segment--thinking">
+        <span>Thinking tokens…</span>
+        <span class="et-seg-note">output · decode phase 1 · billed at output rate</span>
+      </div>
+      <div class="et-timeline__arrow">→</div>
+      <div class="et-timeline__segment et-timeline__segment--answer">
+        <span>Answer tokens</span>
+        <span class="et-seg-note">output · decode phase 2 · billed at output rate</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="et-timeline__row">
+    <div class="et-timeline__phase-label">No thinking</div>
+    <div class="et-timeline__track">
+      <div class="et-timeline__segment et-timeline__segment--input">
+        <span>Prompt tokens</span>
+        <span class="et-seg-note">input · prefill · 1 pass</span>
+      </div>
+      <div class="et-timeline__arrow">→</div>
+      <div class="et-timeline__segment et-timeline__segment--answer et-timeline__segment--answer-only">
+        <span>Answer tokens</span>
+        <span class="et-seg-note">output · decode · billed at output rate</span>
+      </div>
+    </div>
+  </div>
+
+  <p class="et-timeline__caption">
+    Every thinking token is autoregressive: the model attends to all prior tokens (including its own thinking so far) before generating the next one. Thinking tokens are <strong>not</strong> a lookup or retrieval — they are generation, billed at the full output rate. <em>Illustrative.</em>
+  </p>
+</div>
+
+## How the API works — 2026 state
+
+The `thinking` field on the Messages API has three modes:
+
+```json
+{ "type": "adaptive" }
+{ "type": "enabled", "budget_tokens": 10000 }
+{ "type": "disabled" }
+```
+
+**`adaptive` is the recommended mode** for current models. Claude decides when and how much to think based on request complexity. You can guide the depth with an `effort` level via `output_config: { effort: "<level>" }`:
+
+| Effort | Behavior |
+|--------|----------|
+| `max` | Always thinks, no depth constraint |
+| `xhigh` | Always thinks deeply (Opus 4.7 only) |
+| `high` (default) | Always thinks |
+| `medium` | Moderate thinking; may skip on simple queries |
+| `low` | Minimizes thinking |
+
+**`enabled` (manual mode)** requires a `budget_tokens` value — the maximum tokens the model may spend on its thinking phase. This mode is deprecated on Opus 4.6 and Sonnet 4.6, and **rejected with a 400 error on Opus 4.7**. It still works on Haiku 4.5 and older legacy models (Opus 4.5, Sonnet 4.5).
+
+A key billing nuance: when `display: "summarized"` is set, you see a condensed summary of the thinking — but you are **billed for the full thinking tokens generated**, not the shorter summary. The visible token count and the billed token count do not match. This is documented behavior, not a billing error.
+
+## When thinking helps vs. hurts
+
+**Thinking earns its cost when the task has state that accumulates across steps:**
+
+- Multi-step math and logic — each step depends on a fact established earlier
+- Complex planning — laying out a sequence before executing any of it
+- Careful debugging — reading and evaluating a system before proposing a fix
+- Constraint satisfaction — an answer that must simultaneously meet several requirements
+
+**Thinking adds latency and cost without benefit when:**
+
+- **Factual recall** — "What is the capital of France?" The model does not gain access to facts it does not already have
+- **Simple extraction or formatting** — structured-output tasks are typically one-pass
+- **Latency-sensitive UIs** — the full thinking phase must complete before answer tokens begin streaming
+
+**Thinking can actively hurt when:**
+
+- You need guaranteed output format (e.g. strict JSON schema) — the thinking phase does not guarantee format adherence; test carefully
+- You are running at scale with `effort: "high"` — at Opus 4.7 rates ($25/MTok for all output tokens), a 16,000-token thinking budget costs $0.40 in thinking charges alone, before a single answer token
+
+The adaptive mode with `effort: "medium"` is a reasonable default for mixed workloads: the model will skip thinking for simple lookups and invoke it for harder tasks.
+
+## Interactive demo — effort levels
+
+<ThinkingBudget client:visible />
+
+## Three misconceptions
+
+**1. "Thinking is a separate inner model."**
+False. Extended thinking is the same decoder producing tagged tokens. There is no second model, no hidden inference engine, no parallel process. The model runs one forward pass per token regardless of whether thinking is on or off. What changes is the label on the tokens, not the mechanism that generates them.
+
+**2. "More thinking budget always means better answers."**
+Documented behavior says no. The API docs note diminishing returns above ~32k tokens, and the model may not use the full budget allocated. Setting a 100k budget on a three-step math problem wastes money and time. The model uses roughly the budget it needs for the problem at hand — which is exactly why adaptive mode exists.
+
+**3. "Hidden thinking is private."**
+The `thinking` block is encrypted in the sense that you cannot inject fake thinking and have the model trust it (the API verifies the `signature` field). But the API *does* return the thinking content — as a summary or full text depending on the model and `display` setting. It is not hidden from the API caller. Hiding thinking from your end users is a product decision you make, not a default guarantee.
+
+## Cache interaction — the most important section
+
+This is where extended thinking creates a new silent invalidator, directly extending the list from Chapter 7.
+
+**System prompt cache is insulated.** Changing the thinking parameter — including changing `budget_tokens` — does **not** invalidate system prompt cache entries. A cached system prompt survives a switch from `budget_tokens: 4000` to `budget_tokens: 8000`.
+
+**Message-block cache is not.** Changing `budget_tokens` between requests **invalidates message-level cache entries**. The request that changes the budget looks identical to the previous one from the conversation perspective — same messages, same content — but the cache sees a different parameter and treats it as a miss. This is the same class of surprise as the silent invalidators in Chapter 7: no error, no warning, just a miss and full reprocessing cost.
+
+Here is a concrete three-request scenario (illustrative, based on documented behavior):
+
+<div class="et-cache-scenario" role="img" aria-label="Cache behavior across three requests with changing budget_tokens (illustrative)">
+  <div class="et-cs-row et-cs-row--header">
+    <div class="et-cs-cell et-cs-cell--req">Request</div>
+    <div class="et-cs-cell">Thinking config</div>
+    <div class="et-cs-cell">System cache</div>
+    <div class="et-cs-cell">Message cache</div>
+  </div>
+
+  <div class="et-cs-row">
+    <div class="et-cs-cell et-cs-cell--req">1 — warm-up</div>
+    <div class="et-cs-cell"><code>budget_tokens: 4000</code></div>
+    <div class="et-cs-cell et-cs-cell--miss">MISS — cold</div>
+    <div class="et-cs-cell et-cs-cell--miss">MISS — cold</div>
+  </div>
+
+  <div class="et-cs-row">
+    <div class="et-cs-cell et-cs-cell--req">2 — same budget</div>
+    <div class="et-cs-cell"><code>budget_tokens: 4000</code></div>
+    <div class="et-cs-cell et-cs-cell--hit">HIT</div>
+    <div class="et-cs-cell et-cs-cell--hit">HIT</div>
+  </div>
+
+  <div class="et-cs-row et-cs-row--highlight">
+    <div class="et-cs-cell et-cs-cell--req">3 — budget changed</div>
+    <div class="et-cs-cell"><code>budget_tokens: 8000</code></div>
+    <div class="et-cs-cell et-cs-cell--hit">HIT</div>
+    <div class="et-cs-cell et-cs-cell--miss">MISS — silent</div>
+  </div>
+
+  <p class="et-cs-caption">
+    The budget change on Request 3 is invisible to the conversation — same system prompt, same messages — but it invalidates the message-block cache. System prompt cache survives because thinking parameters do not affect the system prefix. <em>Illustrative. Numbers are approximate.</em>
+  </p>
+</div>
+
+**Switching thinking modes also breaks message cache.** Toggling between `adaptive` and `enabled` or `disabled` invalidates message-level cache breakpoints. Switching `display` between `"summarized"` and `"omitted"` does **not** — the underlying signature is identical regardless of display mode.
+
+**Practical rule:** If you run a multi-turn conversation with thinking enabled and want to preserve message-block cache hits, do not change `budget_tokens` or toggle the thinking type mid-conversation. Pick a mode and stay in it for the session.
+
+For long thinking-enabled sessions (complex multi-step agentic workflows that span more than a few minutes), the 1-hour TTL is recommended over the default 5-minute TTL — a thinking session that runs longer than the TTL window loses its cached system prompt and must pay the full write cost again. As Chapter 7 explains, the 1-hour tier carries a higher write premium, so it only pays off if the session genuinely extends beyond 5 minutes and the prefix is stable.
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/extended-thinking.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+Chapter 7's list of silent cache invalidators now includes a new entry: <strong>changing <code>budget_tokens</code> between requests invalidates message-block cache entries</strong>, even when the conversation content is identical. System prompt cache is insulated — it survives thinking parameter changes. Message-block cache is not. Pick a thinking configuration for your session and keep it stable, for the same reason you keep tool definitions stable: any change that shifts the token sequence at a breakpoint turns a cache hit into a full-cost miss, with no warning.
 </CacheCallout>
+
+<style>{`
+  /* ── Token timeline diagram ─────────────────────────────────── */
+  .et-timeline-diagram {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-6);
+    background: var(--color-surface);
+    max-width: var(--content-max);
+    margin: var(--space-6) 0;
+    overflow-x: auto;
+  }
+
+  .et-timeline__row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .et-timeline__row--header {
+    margin-bottom: var(--space-2);
+  }
+
+  .et-timeline__phase-label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-muted);
+    width: 90px;
+    flex-shrink: 0;
+  }
+
+  .et-timeline__track-label {
+    font-size: 0.72rem;
+    color: var(--color-muted);
+    font-style: italic;
+  }
+
+  .et-timeline__track {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+  }
+
+  .et-timeline__segment {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.4rem 0.8rem;
+    border-radius: 6px;
+    border: 1.5px solid transparent;
+    font-size: 0.82rem;
+    font-weight: 600;
+    text-align: center;
+    min-width: 110px;
+  }
+
+  .et-seg-note {
+    display: block;
+    font-size: 0.65rem;
+    font-weight: 400;
+    color: inherit;
+    opacity: 0.75;
+    margin-top: 3px;
+    white-space: nowrap;
+  }
+
+  .et-timeline__segment--input {
+    background: var(--color-accent-soft);
+    border-color: var(--color-accent);
+    color: #1e40af;
+  }
+
+  .et-timeline__segment--thinking {
+    background: #f5f3ff;
+    border-color: #8b5cf6;
+    color: #5b21b6;
+    min-width: 160px;
+  }
+
+  .et-timeline__segment--answer {
+    background: #f0fdf4;
+    border-color: #4ade80;
+    color: #166534;
+  }
+
+  .et-timeline__segment--answer-only {
+    min-width: 160px;
+  }
+
+  .et-timeline__arrow {
+    color: var(--color-muted);
+    font-size: 1rem;
+    padding: 0 2px;
+    flex-shrink: 0;
+  }
+
+  .et-timeline__caption {
+    margin: var(--space-4) 0 0;
+    font-size: 0.78rem;
+    color: var(--color-muted);
+    line-height: 1.5;
+  }
+
+  /* ── Cache scenario table ───────────────────────────────────── */
+  .et-cache-scenario {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    max-width: var(--content-max);
+    margin: var(--space-6) 0;
+    font-size: 0.84rem;
+  }
+
+  .et-cs-row {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr 1fr 1fr;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .et-cs-row:last-of-type {
+    border-bottom: none;
+  }
+
+  .et-cs-row--header {
+    background: var(--color-surface);
+    font-weight: 700;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-muted);
+  }
+
+  .et-cs-row--highlight {
+    background: #fff8ed;
+  }
+
+  .et-cs-cell {
+    padding: var(--space-3) var(--space-4);
+    border-right: 1px solid var(--color-border);
+    display: flex;
+    align-items: center;
+  }
+
+  .et-cs-cell:last-child {
+    border-right: none;
+  }
+
+  .et-cs-cell--req {
+    font-weight: 600;
+    font-size: 0.8rem;
+    color: var(--color-text);
+  }
+
+  .et-cs-cell--hit {
+    color: #166534;
+    font-weight: 600;
+    background: #f0fdf4;
+  }
+
+  .et-cs-cell--miss {
+    color: #7c2d12;
+    font-weight: 600;
+    background: #fff7ed;
+  }
+
+  .et-cs-caption {
+    padding: var(--space-3) var(--space-4);
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    line-height: 1.5;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    margin: 0;
+  }
+`}</style>
