@@ -7,10 +7,335 @@ prev: "/extended-thinking"
 next: "/long-context"
 ---
 
+import SSEStream from '../components/SSEStream.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/streaming-and-structured-outputs.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+Two "output shape" concerns follow you everywhere in production: **streaming** and **structured outputs**. They are often discussed in the same breath and just as often confused. This chapter separates them.
+
+**Streaming** is about *when* you see the output. The model generates one token at a time regardless of whether streaming is on — that is the autoregressive decode loop from Ch 5. Streaming means each token is sent to you over an open HTTP connection as soon as it is sampled, instead of waiting for the entire response to finish. Nothing about what is generated changes; only the timing changes.
+
+**Structured outputs** are about *what shape* the output can take. A constraint is placed on the response — it must be valid JSON, or must match a particular schema. There are three very different mechanisms for enforcing that constraint, with very different reliability guarantees.
+
+The two concepts compose cleanly once you hold them separately. You can have either without the other, and both together is the normal production configuration.
+
+## Streaming — what is on the wire
+
+### SSE event types
+
+The transport is **Server-Sent Events (SSE)**: a standard browser API for long-lived HTTP connections where the server pushes data. The client keeps the connection open; the server writes lines in the format `event: <name>\ndata: <json>\n\n`. SSE was chosen over WebSockets because it is simpler, HTTP-native, proxy-friendly, and one-directional — which is all you need for a streaming response.
+
+An Anthropic stream follows a fixed sequence. Here is an abbreviated example of a plain text response:
+
+```
+event: message_start
+data: {"type":"message_start","message":{"id":"msg_01…","content":[],"stop_reason":null,"usage":{"input_tokens":18,"output_tokens":1}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}
+
+event: message_stop
+data: {"type":"message_stop"}
+```
+
+The full event sequence for a tool call adds a `content_block_start` of type `tool_use`, followed by `content_block_delta` events carrying `input_json_delta` — partial JSON string fragments. Extended thinking adds a `thinking`-type block before the text block, with `thinking_delta` events and a final `signature_delta` (a cryptographic integrity token, not user-facing text).
+
+| Event | What to do |
+|---|---|
+| `message_start` | Initialize accumulators. Record `usage.input_tokens`. |
+| `content_block_start` | Create a block accumulator keyed on `index`. Note the `type`: `text`, `tool_use`, or `thinking`. |
+| `content_block_delta` (`text_delta`) | Append `delta.text` to the text accumulator. Safe to render to UI. |
+| `content_block_delta` (`input_json_delta`) | Append `delta.partial_json` to the JSON accumulator. **Do not parse yet.** |
+| `content_block_delta` (`thinking_delta`) | Append `delta.thinking` to the thinking accumulator. |
+| `content_block_delta` (`signature_delta`) | Store `delta.signature`. Do not render — it is a cryptographic token. |
+| `content_block_stop` | If `tool_use`: call `JSON.parse()` on the accumulated JSON string now. |
+| `message_delta` | Read `delta.stop_reason`: `"end_turn"` (done), `"tool_use"` (run the tool), `"max_tokens"` (truncated). |
+| `message_stop` | Stream is complete. |
+
+`stop_reason` is the most important value in the whole stream — it is the fork in your application's control flow.
+
+A minimal correct parse loop:
+
+```
+initialize: text_acc = {}, json_acc = {}
+for each SSE event:
+  if content_block_start: create accumulator[index] with block type
+  if content_block_delta (text_delta): text_acc[index] += delta.text
+  if content_block_delta (input_json_delta): json_acc[index] += delta.partial_json
+  if content_block_stop (tool_use block): parsed = JSON.parse(json_acc[index])
+  if message_delta: act on delta.stop_reason
+```
+
+### TTFT vs. tokens/sec — two different bottlenecks
+
+**Time to first token (TTFT)** is the delay between sending the request and seeing the first token. The bottleneck is the *prefill* phase: the model must process the entire prompt before producing anything. A long system prompt means higher TTFT. Streaming does not improve TTFT.
+
+**Throughput (tokens/sec)** is how fast tokens arrive after the first one. This is the *decode* phase, governed by model size and server hardware. Streaming exposes this progressively rather than buffering the full response.
+
+Streaming is not a compute optimization — it is a delivery optimization. The model generates the same tokens at the same speed either way.
+
+## The SSE event timeline — interactive demo
+
+The demo below replays hand-authored event streams for three scenarios: a plain text response, a tool call, and a response with extended thinking. Play, pause, or step through one event at a time. Watch the accumulation panel — the key pedagogical moment is the tool call: JSON fragments accumulate and the `JSON.parse()` is intentionally blocked until `content_block_stop` fires.
+
+<SSEStream client:visible />
+
+The diagram below shows the same tool-call sequence as a static timeline for quick reference:
+
+<div class="sse-timeline" aria-label="SSE event timeline for a tool_use response (illustrative)">
+  <div class="sse-tl-header">
+    <span>time</span>
+    <span>event type</span>
+    <span>data preview</span>
+  </div>
+  <div class="sse-tl-rows">
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">0 ms</div>
+      <div class="sse-tl-badge sse-tl-msg">message_start</div>
+      <div class="sse-tl-data">input_tokens: 42</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">580 ms</div>
+      <div class="sse-tl-badge sse-tl-blk">content_block_start</div>
+      <div class="sse-tl-data">type:"text" index:0</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">595 ms</div>
+      <div class="sse-tl-badge sse-tl-txt">text_delta</div>
+      <div class="sse-tl-data">"I'll look that up."</div>
+    </div>
+    <div class="sse-tl-row sse-tl-row--faded">
+      <div class="sse-tl-tick">…</div>
+      <div class="sse-tl-badge sse-tl-txt">text_delta ×3</div>
+      <div class="sse-tl-data">more text fragments</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">690 ms</div>
+      <div class="sse-tl-badge sse-tl-blk">content_block_stop</div>
+      <div class="sse-tl-data">index:0 — text block closed</div>
+    </div>
+    <div class="sse-tl-row sse-tl-row--gap">
+      <div class="sse-tl-tick">…</div>
+      <div class="sse-tl-gap-label">~500 ms gap — model generating tool-call tokens</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">1190 ms</div>
+      <div class="sse-tl-badge sse-tl-blk">content_block_start</div>
+      <div class="sse-tl-data">type:"tool_use" index:1 name:"extract_contact"</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">1210 ms</div>
+      <div class="sse-tl-badge sse-tl-json">input_json_delta</div>
+      <div class="sse-tl-data">partial_json: '&#123;"'</div>
+    </div>
+    <div class="sse-tl-row sse-tl-row--faded">
+      <div class="sse-tl-tick">…</div>
+      <div class="sse-tl-badge sse-tl-json">input_json_delta ×9</div>
+      <div class="sse-tl-data">JSON accumulates — do not parse yet</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">1540 ms</div>
+      <div class="sse-tl-badge sse-tl-blk">content_block_stop</div>
+      <div class="sse-tl-data">index:1 — JSON.parse() safe now</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">1560 ms</div>
+      <div class="sse-tl-badge sse-tl-msg">message_delta</div>
+      <div class="sse-tl-data">stop_reason:"tool_use"</div>
+    </div>
+    <div class="sse-tl-row">
+      <div class="sse-tl-tick">1580 ms</div>
+      <div class="sse-tl-badge sse-tl-msg">message_stop</div>
+      <div class="sse-tl-data">stream closed</div>
+    </div>
+  </div>
+  <p class="sse-tl-caption">
+    Illustrative timing. The 500 ms gap between the text block and the tool_use block represents the decode steps that produce the tool-call tokens. All data hand-authored.
+  </p>
+</div>
+
+## Structured outputs — three mechanisms
+
+"JSON mode" is not a single thing. It maps to at least three distinct mechanisms with different reliability profiles, failure modes, and costs.
+
+### Mechanism 1 — Prompt-constrained
+
+You instruct the model in a system or user message: *"Return your answer as a JSON object with fields `name` and `score`."* The model attempts to comply. If it does not — preamble text, postamble, wrong field names, trailing commas — `JSON.parse()` throws.
+
+**Reliability:** inconsistent. Degrades with schema complexity and proximity to the token limit. **Use when:** prototyping, or human-consumed output.
+
+### Mechanism 2 — Tool use as structured output
+
+You define a tool whose `input_schema` is exactly the JSON structure you want, then force it with `tool_choice: { "type": "tool", "name": "…" }`. The response `tool_use.input` is already a parsed object — no string to parse. The model is trained on trajectories where the `input` matches the schema.
+
+```json
+{
+  "name": "extract_contact",
+  "description": "Extract structured contact information from text.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "name":    { "type": "string" },
+      "email":   { "type": "string" },
+      "company": { "type": "string" }
+    },
+    "required": ["name", "email"],
+    "additionalProperties": false
+  }
+}
+```
+
+**Reliability:** high. The `strict: true` flag adds a constrained-decoding guarantee on top of the training-based reliability. **Cache note:** tool definitions sit in the cached prefix — a schema change is a silent prompt-cache invalidator (see Ch 7).
+
+### Mechanism 3 — Grammar-constrained decoding (`output_config.format`)
+
+The token sampler itself is restricted. Before sampling the next token, the engine filters out any token that would make the partial output invalid against the compiled JSON Schema grammar. The result is mathematically guaranteed to be schema-conformant.
+
+```json
+{
+  "output_config": {
+    "format": {
+      "type": "json_schema",
+      "json_schema": { "…your schema…": true }
+    }
+  }
+}
+```
+
+The schema is compiled and cached for 24 hours. **Unsupported schema features** (they exceed what can be compiled into the required grammar): recursive schemas, numerical range constraints, string length constraints, most array cardinality constraints. This is also what Outlines (`dottxt-ai/outlines`) and llama.cpp's `--grammar` flag implement for open-source models.
+
+### Comparison
+
+| Platform | Feature | Mechanism | Guarantee |
+|---|---|---|---|
+| Anthropic (historical) | Prompt instruction | Prompt-constrained | None |
+| Anthropic (historical) | Tool-use pattern | Training + schema | High, not absolute |
+| Anthropic (2026) | `output_config.format` | Grammar-constrained decoding | Absolute (within schema limits) |
+| OpenAI | `json_object` mode | Prompt-constrained | None |
+| OpenAI | `json_schema` + `strict: true` | Grammar-constrained decoding | Absolute (within schema limits) |
+
+## Three misconceptions
+
+**"JSON mode = sampler-constrained on Anthropic."** Not historically. The classic Anthropic recommendation was the tool-use pattern — training-based, not sampler-level. Anthropic's `output_config.format` (2026) does use constrained decoding. OpenAI's `json_object` mode does not. "JSON mode" has meant all three mechanisms on different platforms at different times. Ask which mechanism, not just the name.
+
+**"Streaming makes the model faster."** No. Streaming reduces *perceived* time to first result by delivering tokens as they are produced. Total generation time is identical with or without streaming. The model generates the same tokens at the same speed either way.
+
+**"Schema validation = correct content."** Schema validation guarantees shape, not truth. With grammar-constrained decoding, the output matches the schema. It will not necessarily contain correct values. A field typed as `number` can contain any number. A field typed as `string` can contain any string. The model can produce schema-conformant output that is factually wrong or semantically nonsensical. Schema compliance tells you the structure is right; semantic validation is a separate, downstream concern.
+
+## Cache interaction
+
+Two independent caching systems interact when you use structured outputs:
+
+**Prompt cache (Ch 7)** — keyed on the token-level prefix, TTL 5 min or 1 hour. Tool definitions sit in the cached prefix. Using the tool-use pattern for structured output means schema changes blow the prompt cache cold from the Tool defs breakpoint forward — silently, with no API warning.
+
+**Grammar cache** — keyed on schema content, TTL 24 hours. Used only by `output_config.format`. A schema change invalidates the grammar cache but not the prompt cache. You can have a prompt-cache hit and a grammar-cache miss simultaneously: no extra token charges, but compilation latency on the next request.
+
+The two caches have different TTLs, different invalidation triggers, and different cost implications. A tool-definition schema edit costs you tokens; an `output_config` schema edit costs you latency.
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/streaming-and-structured-outputs.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+  On Anthropic, "force JSON" is historically built on tool use: the output schema is a tool definition sitting in the cached prefix, and <code>tool_choice</code> forces a structured <code>tool_use</code> block. The 2026 <code>output_config.format</code> mechanism is a separate grammar-based path. Either way, <strong>schema edits silently invalidate caches</strong> — tool-use schema edits blow the prompt cache (Ch 7); <code>output_config</code> schema edits blow the 24-hour grammar cache. Treat your output schema like your system prompt: stable content you change deliberately, not iteratively.
 </CacheCallout>
+
+<style>{`
+  /* ── SSE timeline diagram ─────────────────────────── */
+  .sse-timeline {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    max-width: var(--content-max);
+    margin: var(--space-6) 0;
+    overflow-x: auto;
+  }
+
+  .sse-tl-header {
+    display: grid;
+    grid-template-columns: 80px 195px 1fr;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-muted);
+  }
+
+  .sse-tl-rows {
+    padding: var(--space-2) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sse-tl-row {
+    display: grid;
+    grid-template-columns: 80px 195px 1fr;
+    gap: var(--space-3);
+    align-items: center;
+    padding: 3px 0;
+  }
+
+  .sse-tl-row--faded { opacity: 0.55; }
+
+  .sse-tl-row--gap {
+    display: flex;
+    gap: var(--space-3);
+    align-items: center;
+    border-top: 1px dashed var(--color-border);
+    border-bottom: 1px dashed var(--color-border);
+    padding: 4px 0;
+    margin: 2px 0;
+  }
+
+  .sse-tl-gap-label {
+    font-size: 0.72rem;
+    color: var(--color-muted);
+    font-style: italic;
+  }
+
+  .sse-tl-tick {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    color: var(--color-muted);
+  }
+
+  .sse-tl-badge {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    border: 1px solid;
+    white-space: nowrap;
+    display: inline-block;
+  }
+
+  .sse-tl-msg  { background: #dbeafe; color: #1e40af; border-color: #93c5fd; }
+  .sse-tl-blk  { background: #dcfce7; color: #166534; border-color: #86efac; }
+  .sse-tl-txt  { background: #fef3c7; color: #92400e; border-color: #fcd34d; }
+  .sse-tl-json { background: #ffedd5; color: #9a3412; border-color: #fdba74; }
+
+  .sse-tl-data {
+    font-size: 0.75rem;
+    color: var(--color-text);
+    font-family: var(--font-mono);
+    opacity: 0.8;
+  }
+
+  .sse-tl-caption {
+    padding: var(--space-2) var(--space-4) var(--space-3);
+    font-size: 0.78rem;
+    color: var(--color-muted);
+    border-top: 1px solid var(--color-border);
+    line-height: 1.5;
+    font-style: italic;
+  }
+`}</style>
