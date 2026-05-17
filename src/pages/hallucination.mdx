@@ -1,16 +1,267 @@
 ---
 layout: ../layouts/ChapterLayout.astro
-title: "Hallucination and calibration"
+title: "Hallucination & calibration"
 chapterNumber: null
 takeaway: "Why models confabulate, why temperature=0 is not the cure, and what actually reduces it."
 prev: "/mcp"
 next: ""
 ---
 
+import Inconsistency from '../components/Inconsistency.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/hallucination-and-calibration.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+Claude said something confidently wrong — why? You asked a straightforward question. You got a fluent, detailed, specific answer. Then you checked, and the answer was fabricated. The model wasn't lying. It wasn't broken. It was doing exactly what it was trained to do: produce the most probable continuation of your prompt. The problem is that "most probable continuation" and "accurate response" are not the same thing — and the model has no reliable internal alarm that fires when they diverge.
+
+This chapter explains why that happens, whether the model can tell when it's wrong, what you can do to catch confabulation, and which mitigations actually work. It does not promise a fix. Nobody has fixed hallucination at the model level.
+
+## Two distinct failure modes
+
+The word "hallucination" covers two different problems with different causes and different remedies. Conflating them leads to bad mitigation strategies.
+
+**Factual hallucination** — the model produces a claim that is false about the world. A wrong date, a nonexistent citation, a person who never said that, a company that doesn't exist. The classic examples include fabricated legal citations (several well-documented court cases have been dismissed after lawyers cited AI-generated cases that do not exist) and invented statistics ("studies show that X% of people…" where X is plausible and the study was never conducted). This is sometimes called open-domain hallucination: the model is drawing on, or failing to draw on, its training data about the real world.
+
+**Faithfulness hallucination** — the model is given a source — a document, a set of retrieved passages, a transcript — and asked to answer based on it. The answer is not supported by, or actively contradicts, the provided source. Sub-types include citation drift (the model attaches a real citation to a claim it doesn't quite support), cross-source synthesis errors (the model synthesizes a claim that no single document makes), and source contradiction (the model's output falls back on training priors instead of what was given). This is the failure mode that RAG systems are most directly vulnerable to: retrieval reduces open-domain hallucination by giving the model something to anchor on, while introducing faithfulness hallucination risk because the model can still misrepresent what it was given.
+
+The factuality vs. faithfulness taxonomy originates in Huang et al. (2023), "A Survey on Hallucination in Large Language Models," ACM Transactions on Information Systems ([arXiv 2311.05232](https://arxiv.org/abs/2311.05232), submitted November 2023, revised November 2024). An older framing uses "intrinsic" (output contradicts the source) and "extrinsic" (output cannot be verified from the source) from Ji et al. (2023), ACM Computing Surveys ([doi:10.1145/3571730](https://dl.acm.org/doi/10.1145/3571730)). The factuality/faithfulness frame maps better to the user experience described here.
+
+## Why it happens — mechanisms (hedged)
+
+There is no single agreed-upon mechanism. Several credible explanations are probably all contributing simultaneously in different degrees on different tasks. Evidence tags below indicate confidence level.
+
+**Training-distribution gap** [Well-supported] — The model generates fluently in proportion to what it has seen. Asked about something rare, recent, niche, or simply not well-represented in training data, the model cannot recall because the knowledge was never consolidated in its weights — but it can still produce a plausible-sounding completion because it has seen adjacent patterns. Factual accuracy is consistently higher for topics with dense, repeated, consistent training coverage (major historical events, canonical programming APIs) than for obscure topics, recent events, or highly specific technical details. This pattern predicts hallucination rates better than any other single variable. *Hedge:* "the model didn't see it" is an incomplete explanation even for factual errors on well-covered topics — models hallucinate about Abraham Lincoln.
+
+**Stochastic generation** [Well-supported] — The model doesn't retrieve a stored answer; it generates one token at a time from a probability distribution (see [Ch 5 — Generation](/05-generation)). Each token choice shifts the distribution over the next token. A slightly off-probability early token can start a chain of locally plausible but globally false completions. By the time the model is five tokens into a wrong sentence, abandoning it would require generating a semantically odd correction — itself improbable. *Hedge:* at temperature=0 (greedy/argmax decoding), stochastic sampling is removed, yet hallucinations persist. Sampling is a contributing factor, not the root cause.
+
+**Pressure to answer — RLHF amplifies confident-sounding output** [Suggestive] — Models trained with RLHF are rewarded for being helpful. "I don't know" responses, hedged responses, and refusals tend to score lower in human preference judgments than fluent, confident-sounding answers — even when the hedged answer is more epistemically honest. Training signal that rewards confidence over accuracy nudges the model toward confident-sounding completions whether or not they are accurate. The most direct evidence comes from sycophancy research: Sharma et al. (2023), "Towards Understanding Sycophancy in Language Models" ([arXiv 2310.13548](https://arxiv.org/abs/2310.13548)), found that annotators and preference models sometimes chose convincingly-written sycophantic responses over correct ones. *Important distinction:* this is a mechanism for overconfidence, not hallucination per se. RLHF amplifies confidence in wrong answers rather than inserting new wrong answers. Anthropic's Constitutional AI paper (Bai et al. 2022, [arXiv 2212.08073](https://arxiv.org/abs/2212.08073)) documented calibration concerns in feedback models and used probability clamping to avoid overconfident labels — documenting Anthropic's awareness of overconfidence as an RLHF failure mode, not an achieved solution.
+
+**Sycophancy** [Well-supported] — If you tell Claude the Battle of Hastings was in 1067, there is meaningful probability Claude accepts that frame and answers accordingly. Sharma et al. (2023) tested this across five leading AI assistants and found consistent sycophantic behavior. The mechanism: RLHF human raters systematically prefer responses that agree with their stated views, so models trained on preference data learn that agreement is rewarded. *Practical implication:* when you suspect you've been told something false, a neutral re-ask isn't sufficient — the model may remember your framing. Asking from a blank context is more reliable; providing the correct premise explicitly ("I've heard X but I want to verify — what is actually true?") is better still.
+
+**Long-context degradation** [Well-supported] — A model can have the correct answer in its context and still produce a wrong answer because it fails to attend to the relevant part of a long input. Liu et al. (2023), "Lost in the Middle: How Language Models Use Long Contexts," Transactions of the Association for Computational Linguistics ([arXiv 2307.03172](https://arxiv.org/abs/2307.03172)), showed a U-shaped accuracy curve: performance is best when relevant information is at the start or end of the context, and drops meaningfully when it's in the middle. *Important hedge:* the original study used models now multiple generations old; newer models may have partially mitigated the U-shape. Apply the directional finding ("put critical facts near the beginning or end") rather than the specific numbers. See also [Long context](/long-context).
+
+**Tokenization quirks** [Suggestive] — Language models operate on subword tokens, not characters or words. Numbers, dates, and rare words are often tokenized in ways that fragment their structure. Research on "Improbable Bigrams" ([arXiv 2410.23684](https://arxiv.org/abs/2410.23684), October 2024) demonstrated that bigrams formed from incomplete tokens are significantly more prone to hallucination. Be especially skeptical of model outputs involving specific dates, numbers, calculations, and rare proper nouns — empirically higher-hallucination categories.
+
+**Context-training conflict** [Informed speculation for mechanism; Suggestive for behavioral pattern] — When provided context contradicts the model's training data, the model must resolve the conflict. It may follow the context, fall back on training, or produce a confused blend — and the resolution is not predictable. If you are providing a document specifically to override training-time knowledge, be explicit: "The following document supersedes any prior training knowledge about this topic. Use only the document." This shifts the model's attention weighting without being a guarantee.
+
+## Calibration — does the model know when it's wrong?
+
+**Calibration** means that when a model says "I'm 80% confident," it should be right 80% of the time. A well-calibrated model's stated confidence level is a reliable signal of its actual accuracy. An overconfident model states 90% confidence but is right only 60% of the time.
+
+The standard visualization is a reliability diagram: x-axis = bucketed stated confidence (0–10%, 10–20%, … 90–100%), y-axis = actual accuracy per bucket. Perfect calibration = diagonal line. Overconfidence = curve falls below the diagonal. The diagram below is illustrative — it reflects the documented overconfidence shape in post-RLHF instruction-tuned models, not measured data from a specific Claude deployment. *Illustrative — not real model output.*
+
+{/* Inline SVG — calibration reliability diagram */}
+<svg
+  viewBox="0 0 480 360"
+  width="480"
+  height="360"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-label="Illustrative calibration reliability diagram. Overconfident model curve falls below the perfect calibration diagonal."
+  style={{ display: "block", maxWidth: "100%", margin: "1.5rem 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface)" }}
+>
+  {/* Grid lines */}
+  <line x1="60" y1="254" x2="440" y2="254" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="60" y1="198" x2="440" y2="198" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="60" y1="142" x2="440" y2="142" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="60" y1="86"  x2="440" y2="86"  stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="60" y1="30"  x2="440" y2="30"  stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="136" y1="30" x2="136" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="212" y1="30" x2="212" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="288" y1="30" x2="288" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="364" y1="30" x2="364" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+  <line x1="440" y1="30" x2="440" y2="310" stroke="#e5e7eb" strokeWidth="1" />
+
+  {/* Perfect calibration diagonal */}
+  <line x1="60" y1="310" x2="440" y2="30" stroke="#9ca3af" strokeWidth="1.5" strokeDasharray="6 4" />
+
+  {/* Overconfident model curve — points at bucket midpoints
+      conf midpoints: 0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95
+      accuracy:       0.08,0.17,0.24,0.33,0.42,0.53,0.58,0.62,0.64,0.63
+      x = 60 + conf*380; y = 310 - acc*280 */}
+  <polyline
+    points="79,287.6 117,262.4 155,242.8 193,217.6 231,192.4 269,161.6 307,147.6 345,136.6 383,130.8 421,133.6"
+    fill="none"
+    stroke="#3b82f6"
+    strokeWidth="2.5"
+    strokeLinejoin="round"
+  />
+
+  {/* Dots */}
+  <circle cx="79"  cy="287.6" r="4" fill="#3b82f6" />
+  <circle cx="117" cy="262.4" r="4" fill="#3b82f6" />
+  <circle cx="155" cy="242.8" r="4" fill="#3b82f6" />
+  <circle cx="193" cy="217.6" r="4" fill="#3b82f6" />
+  <circle cx="231" cy="192.4" r="4" fill="#3b82f6" />
+  <circle cx="269" cy="161.6" r="4" fill="#3b82f6" />
+  <circle cx="307" cy="147.6" r="4" fill="#3b82f6" />
+  <circle cx="345" cy="136.6" r="4" fill="#3b82f6" />
+  <circle cx="383" cy="130.8" r="4" fill="#3b82f6" />
+  <circle cx="421" cy="133.6" r="4" fill="#3b82f6" />
+
+  {/* Gap annotation at 90-100% bucket: diagonal at x=421 is y=310-(0.95*280)=43.6; model is at 133.6 */}
+  <line x1="421" y1="133.6" x2="421" y2="43.6" stroke="#ef4444" strokeWidth="1.5" strokeDasharray="3 3" />
+  <text x="426" y="92"  fontSize="10" fill="#ef4444" fontFamily="system-ui,sans-serif">gap</text>
+  <text x="426" y="104" fontSize="9"  fill="#ef4444" fontFamily="system-ui,sans-serif">≈32 pp</text>
+
+  {/* Axes */}
+  <line x1="60" y1="30"  x2="60"  y2="310" stroke="#6b7280" strokeWidth="1.5" />
+  <line x1="60" y1="310" x2="440" y2="310" stroke="#6b7280" strokeWidth="1.5" />
+
+  {/* Y-axis labels */}
+  <text x="52" y="314" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">0%</text>
+  <text x="52" y="258" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">20%</text>
+  <text x="52" y="202" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">40%</text>
+  <text x="52" y="146" textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">60%</text>
+  <text x="52" y="90"  textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">80%</text>
+  <text x="52" y="34"  textAnchor="end" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">100%</text>
+
+  {/* X-axis labels */}
+  <text x="60"  y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">0%</text>
+  <text x="136" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">20%</text>
+  <text x="212" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">40%</text>
+  <text x="288" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">60%</text>
+  <text x="364" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">80%</text>
+  <text x="440" y="324" textAnchor="middle" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">100%</text>
+
+  {/* Axis titles */}
+  <text x="250" y="344" textAnchor="middle" fontSize="11" fill="#374151" fontFamily="system-ui,sans-serif">Stated confidence</text>
+  <text x="12"  y="170" textAnchor="middle" fontSize="11" fill="#374151" fontFamily="system-ui,sans-serif" transform="rotate(-90 12 170)">Actual accuracy</text>
+
+  {/* Legend */}
+  <line x1="68" y1="48" x2="92" y2="48" stroke="#9ca3af" strokeWidth="1.5" strokeDasharray="6 4" />
+  <text x="96" y="52" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">Perfect calibration (diagonal)</text>
+  <line x1="68" y1="64" x2="92" y2="64" stroke="#3b82f6" strokeWidth="2.5" />
+  <circle cx="80" cy="64" r="3.5" fill="#3b82f6" />
+  <text x="96" y="68" fontSize="10" fill="#6b7280" fontFamily="system-ui,sans-serif">Instruction-tuned model (illustrative)</text>
+
+  {/* Note */}
+  <text x="60" y="355" fontSize="8.5" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — not real model output. Shape reflects documented overconfidence in post-RLHF models (Kadavath et al. 2022; arXiv 2410.09724).</text>
+</svg>
+
+The diagram makes the problem concrete: the model says 90–100% confident but is right only about 63% of the time at that stated level. The overconfidence effect is strongest in the high-confidence bins.
+
+### Pre-training vs. post-training calibration gap
+
+One of the sharper findings in this space: base language models (before instruction-tuning and RLHF) tend to be reasonably well-calibrated on structured tasks. Post-RLHF instruction-tuned models tend to be overconfident — they express more confidence than their accuracy warrants.
+
+Evidence: Kadavath et al. (2022), Anthropic, "Language Models (Mostly) Know What They Know," [arXiv 2207.05221](https://arxiv.org/abs/2207.05221), found that larger models are reasonably well-calibrated on multiple-choice and true/false questions in the right probing format. The paper also examined RLHF-tuned variants and found the picture is more complex — instruction tuning and RLHF shift the calibration. More direct evidence comes from "Taming Overconfidence in LLMs: Reward Calibration in RLHF" ([arXiv 2410.09724](https://arxiv.org/abs/2410.09724), October 2024), which documented that RLHF training can produce overconfident output distributions.
+
+*"Mostly" in the Kadavath title is doing real work:* calibration was task- and format-dependent, and the authors were explicit that this was not a general result.
+
+### Verbal confidence is unreliable
+
+When a model says "I'm 90% sure" or "I'm fairly confident," should you believe it? Current evidence says mostly no — and directionally wrong in the overconfidence direction. Expressed confidence is itself generated text: the model generates "I'm confident" because that phrase is a probable completion of the prompt, not because its internal uncertainty is low. There is no direct coupling between verbal confidence expressions and the model's token-level probability distributions.
+
+Multiple studies on instruction-tuned LLMs document that verbal confidence expressions do not reliably track accuracy. The "Dunning-Kruger Effect in Large Language Models" ([arXiv 2603.09985](https://arxiv.org/abs/2603.09985)) found miscalibration patterns analogous to the human cognitive bias. *In 2026, a view circulates that frontier models are "well calibrated" or have solved overconfidence. This is not supported by peer-reviewed primary literature as of this writing. The correct statement is: recent models are less badly calibrated than earlier models on some task formats. That is not the same as being well-calibrated in ordinary use.*
+
+### Logprobs: the calibration signal Anthropic users cannot access
+
+In principle, the cleanest calibration signal would be raw token-level probabilities (logprobs): if the model assigns 0.9 probability to a token, and those tokens are correct 90% of the time, the model is well-calibrated at the token level. **Anthropic's Messages API does not expose logprobs as of 2026-05-17.** The API exposes `temperature` as the primary sampling parameter; logprobs are absent. [Verified: Anthropic Messages API documentation, 2026-05-17.]
+
+By contrast, OpenAI's API exposes logprobs as a response parameter. Research on probability-based calibration and semantic entropy typically uses APIs that expose this signal. When you read academic papers about LLM uncertainty estimation, the probability-based methods often assume logprob access that Anthropic users do not currently have. This directly blocks semantic entropy detection for Anthropic API users.
+
+Without logprobs, the closest available signal is response variation: run the same query with different phrasings or multiple times and observe whether answers cluster (low uncertainty proxy) or diverge (higher uncertainty proxy). Less precise than semantic entropy, but accessible.
+
+## Detection — what you can actually do
+
+These techniques are ordered from most to least reliable.
+
+**Citations API** — Anthropic's `citations: enabled` feature on the Messages API forces the model to attach specific text spans from provided documents to each claim. The `cited_text` in the API response is actual verbatim text from the document — not generated by the model. [Anthropic Citations docs, verified 2026-05-17.] This catches faithfulness hallucinations: the citation either points to a real span, or the claim gets no citation. *What it doesn't catch:* factual hallucination outside the provided documents; citation drift (a real span cited in support of a claim it doesn't quite make). Available on all active Claude models except Haiku 3 as of 2026. Incompatible with Structured Outputs.
+
+**Constrain to sources, require quotation** — Provide the source document and instruct the model to extract word-for-word quotes before synthesizing. Example system-prompt pattern:
+```
+Answer based only on the provided document.
+First, extract direct quotes relevant to the question.
+Then answer using only those quotes.
+If you cannot find a supporting quote, say so.
+```
+Catches faithfulness hallucinations. Adds prompt tokens and can double response length. [Source: Anthropic reduce-hallucinations documentation, verified 2026-05-17.]
+
+**Cross-check across phrasings** — Ask the same factual question in two different formulations or in two separate conversations. Inconsistency is a signal of hallucination. Consistency is not a guarantee of accuracy (a model that consistently hallucinates will give the same wrong answer twice). Doubles cost; requires human comparison.
+
+**Verifier prompt** — Generate an answer in one call; in a second call, ask the model to evaluate whether the answer is supported by a given source. Chain-of-Verification (CoVe) formalizes this: (1) generate draft, (2) generate verification questions, (3) answer those independently, (4) revise based on those answers. Dhuliawala et al. (2023), "Chain-of-Verification Reduces Hallucination," [arXiv 2309.11495](https://arxiv.org/abs/2309.11495), published at ACL Findings 2024. Step (3) answers verification questions independently, preventing the initial hallucination from biasing the check. *Limit:* the verifier and generator share training data — systematic errors fool both.
+
+**Step-by-step output (extended thinking)** — Anthropic's extended thinking (`thinking: enabled`) generates reasoning tokens before the final answer. Useful for multi-step tasks where errors compound. *What it doesn't cure:* thinking tokens are generated by the same autoregressive mechanism as regular tokens — they can confabulate. A thinking trace that confidently reasons through false premises will produce a confident wrong answer.
+
+**Semantic entropy** — Sample N answers, cluster by meaning, compute entropy over meaning-clusters. High entropy signals genuine uncertainty and predicts hallucination. Farquhar, Kossen, Kuhn, Gal (2024), "Detecting hallucinations using semantic entropy," *Nature* 630, 625–630 ([PubMed](https://pubmed.ncbi.nlm.nih.gov/38898292/)). *Not practical for Anthropic API users:* semantic entropy requires logprob access to weight the cluster probabilities. Anthropic's API does not expose logprobs. A weaker behavioral approximation (cluster N responses without probability weighting) is possible but substantially less accurate than the published method.
+
+## The inconsistency demo
+
+The demo below shows the same factual question phrased five ways, with hand-authored responses that disagree on a specific detail. Try all five phrasings.
+
+<Inconsistency client:visible />
+
+## Reduction — in order of leverage
+
+Mitigations listed from highest to lowest expected impact. The right choice depends on which failure mode is most likely for your task.
+
+**1. Retrieval (RAG) — the biggest lever** [Well-supported] — Providing the model with the right information in the context window, rather than relying on training recall, is the largest single reducer of factual hallucination in knowledge-intensive tasks. Anthropic's Contextual Retrieval paper (September 2024, [anthropic.com/research/contextual-retrieval](https://www.anthropic.com/research/contextual-retrieval)) documented 35–67% reductions in retrieval failure rate across configurations. *RAG is not a simple improvement — it is a rebalancing:* it reduces training-gap factual errors while introducing faithfulness hallucination risk. See also [RAG](/rag).
+
+<div class="hall-rag-table">
+
+| Hallucination type | Effect of RAG |
+|---|---|
+| Training-gap factual error | Reduced — model has a source to draw from |
+| Post-cutoff temporal error | Reduced if index is current |
+| Faithfulness / citation drift | Introduced or worsened |
+| Context-training conflict | Shifted — now between retrieved doc and training |
+
+</div>
+
+**2. Tools instead of recall** [Well-supported, task-limited] — For tasks involving current information, calculations, or lookups, giving the model a tool (web search, calculator, database query) eliminates an entire hallucination category: the model doesn't have to "know" — it checks. A model with a working calculator will not hallucinate `2^16`. *Limit:* tool use only helps for claims the tool addresses; the model can still misrepresent tool output.
+
+**3. Citations API** [Well-supported for faithfulness] — Forces grounded outputs. The cited text is extracted from the provided document, not generated by the model. Structurally more reliable than prompt-based citation instructions. [Anthropic Citations docs, verified 2026-05-17.]
+
+**4. Lower temperature — slight reduction** [Suggestive] — At lower temperature the model is more likely to sample high-probability tokens. This reduces the stochastic-drift contribution to hallucination. *Limit:* the effect is modest. Factual hallucination persists at temperature=0. The dominant causes are knowledge gaps and training-distribution effects, not sampling noise. T=0 is better than T=1 for factual precision tasks, but the improvement is not dramatic.
+
+**5. Verifier loops** [Suggestive for real-world gains] — CoVe-style verification reduces hallucination on tasks where the model can effectively self-check. At least 2× cost. Practical for high-stakes outputs; impractical for casual queries. *Limit:* doesn't catch systematic errors shared by generator and verifier.
+
+**6. System-prompt anti-hallucination instructions — modest help** [Suggestive] — "It's okay to say I don't know" (permissive framing) has more behavioral support than "never generate anything you aren't certain about" (prohibitive framing). Anthropic's own guidance frames this as permission to hedge, not a prohibition on generating. The improvement is real but modest — nudges behavior without changing the underlying knowledge distribution. Overly strong prohibitions can produce excessive hedging on questions the model would have answered correctly. [Anthropic reduce-hallucinations docs, verified 2026-05-17.]
+
+## Amplification in agents and long contexts
+
+In a multi-step agent loop, each step's output becomes the next step's input. A confabulation at step 2 — a wrong intermediate result, a hallucinated API field name — becomes a false premise for step 3. By step 5, the agent may be confidently executing a coherent plan built on a foundation that was wrong two steps ago. The model's own prior outputs in the context window become authoritative-looking sources: if the model stated a wrong fact at step 2 and that statement is now part of the conversation history, step 5 may cite its own prior confabulation as justification.
+
+In long contexts, a false premise early in the context — from an earlier turn, a retrieved document, or your own incorrect statement — can contaminate downstream reasoning across the entire session. This is the sycophancy mechanism at scale: the model treats what's already in the context as established truth. See also [Long context](/long-context).
+
+Streaming adds a softer but practically real effect: confident early sentences cognitively anchor the user before the rest of the response arrives. Anchoring bias is well-established in human judgment (Tversky and Kahneman, 1974, *Science* 185). Its specific magnitude in AI-generated streamed text hasn't been directly studied — treat this as informed speculation about a plausible failure mode, not a peer-reviewed finding.
+
+## Three misconceptions
+
+**"Temperature=0 eliminates hallucinations."** No. Anthropic's own API documentation states: "even with temperature of 0.0, the results will not be fully deterministic" due to GPU floating-point non-determinism and batched inference effects. More importantly, greedy decoding uses the same distribution, just at the argmax — and the argmax of a distribution that assigns highest probability to a wrong answer is still that wrong answer. T=0 improves precision on tasks where the model's top-probability answer is the correct one; it does not fix cases where training leads to a confident wrong belief.
+
+**"RAG fixes hallucinations."** No. RAG reduces open-domain factual hallucination by grounding responses in retrieved text. It introduces faithfulness hallucination risk: citation drift, misrepresentation of retrieved content, context-training conflict. A RAG system that retrieves the right document but misquotes it has traded one failure mode for another.
+
+**"High confidence = calibrated."** No. Expressed verbal confidence is generated text. The model generates "I'm confident" because that phrase is a probable completion of the context, not because its internal uncertainty is low. Post-RLHF instruction-tuned models tend to be overconfident — Kadavath et al. (2022) found base models are reasonably calibrated on structured tasks, but the picture degrades after instruction tuning. Treat confident-sounding phrasing as a style artifact, not a calibration signal.
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/hallucination-and-calibration.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+  Calibration is imposed from outside — not reported from within. The model has no reliable internal alarm that fires when it confabulates. What you have: retrieval to reduce the need for recall, the Citations API to force grounded faithfulness claims, cross-checking to surface inconsistency, and verifier loops for high-stakes output. What you don't have: logprob access (blocked on Anthropic's API as of 2026), semantic entropy detection, or a model that knows when it doesn't know. The mental posture that protects you is treating fluent output as a hypothesis: specific claims are worth verifying independently, especially on dates, numbers, rare proper nouns, and anything near the model's training cutoff. The model is always confident; calibration is the work you do around it.
 </CacheCallout>
+
+<style>{`
+  .hall-rag-table table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+    margin: var(--space-4) 0;
+  }
+
+  .hall-rag-table th,
+  .hall-rag-table td {
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--color-border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .hall-rag-table th {
+    background: var(--color-surface);
+    font-weight: 600;
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-muted);
+  }
+
+  .hall-rag-table tr:nth-child(even) td {
+    background: var(--color-surface);
+  }
+`}</style>
