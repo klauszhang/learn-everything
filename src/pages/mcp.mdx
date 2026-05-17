@@ -2,15 +2,428 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Model Context Protocol (MCP)"
 chapterNumber: null
-takeaway: "The USB-C-shaped protocol Claude Code already uses to reach external tools — and the cache-invalidation surface that comes with it."
+takeaway: "The USB-C-shaped protocol that standardizes tool delivery to any LLM host — and why every server you add enlarges the cache-invalidation surface."
 prev: "/agents"
 next: "/hallucination"
 ---
 
+import MCPServers from '../components/MCPServers.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/mcp.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+## The USB-C port for LLM apps
+
+Before MCP, every AI application had to write its own glue code to connect to every external tool or data source — one custom integration per pair. After MCP, a server you write once works in any compatible host: Claude Code, VS Code Copilot, Cursor, ChatGPT, and anything else that speaks the protocol. The analogy on modelcontextprotocol.io says it plainly: "Think of MCP like a USB-C port for AI applications."
+
+Anthropic created MCP and open-sourced it in late 2024. It is not an Anthropic product — it is an open specification. The protocol's current published version is `2025-03-26`, and the ecosystem now spans dozens of clients and hundreds of third-party servers.
+
+---
+
+## Three roles: host, client, server
+
+MCP defines a triangle of three roles.
+
+<style>{`
+  .mcp-triangle {
+    margin: 24px auto;
+    max-width: 680px;
+    font-family: system-ui, -apple-system, sans-serif;
+  }
+  .mcp-tri-row {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+  /* Host box */
+  .mcp-host {
+    flex: 1;
+    border: 2px solid #6366f1;
+    border-radius: 8px;
+    padding: 16px 14px 14px;
+    background: #eef2ff;
+    position: relative;
+  }
+  .mcp-host-label {
+    font-weight: 700;
+    font-size: 0.82rem;
+    color: #4338ca;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .mcp-host-name {
+    font-size: 0.92rem;
+    color: #312e81;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .mcp-clients {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .mcp-client {
+    flex: 1;
+    border: 1.5px solid #818cf8;
+    border-radius: 6px;
+    background: #c7d2fe;
+    padding: 8px 8px 6px;
+    text-align: center;
+  }
+  .mcp-client-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #3730a3;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .mcp-client-sub {
+    font-size: 0.65rem;
+    color: #4338ca;
+    margin-top: 2px;
+  }
+  /* Connectors */
+  .mcp-connectors {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 32px;
+    padding: 0 8px;
+    position: relative;
+  }
+  .mcp-connector-line {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.66rem;
+    color: #6b7280;
+    white-space: nowrap;
+  }
+  .mcp-arrow {
+    font-size: 0.8rem;
+    color: #9ca3af;
+  }
+  /* Servers column */
+  .mcp-servers-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 0 0 160px;
+  }
+  .mcp-server {
+    border: 2px solid #10b981;
+    border-radius: 8px;
+    background: #ecfdf5;
+    padding: 10px 10px 8px;
+  }
+  .mcp-server-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #065f46;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 3px;
+  }
+  .mcp-server-name {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #064e3b;
+  }
+  .mcp-server-badge {
+    display: inline-block;
+    margin-top: 4px;
+    font-size: 0.62rem;
+    font-family: ui-monospace, monospace;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #d1fae5;
+    color: #065f46;
+    font-weight: 600;
+  }
+  .mcp-server-tools {
+    margin-top: 4px;
+    font-size: 0.68rem;
+    color: #6b7280;
+  }
+  /* Merged tool list */
+  .mcp-merged {
+    margin-top: 14px;
+    border: 1.5px dashed #9ca3af;
+    border-radius: 6px;
+    padding: 8px 12px;
+    background: #f9fafb;
+  }
+  .mcp-merged-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #374151;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+  }
+  .mcp-merged-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .mcp-merged-tool {
+    font-family: ui-monospace, monospace;
+    font-size: 0.68rem;
+    background: #e5e7eb;
+    color: #374151;
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .mcp-caption {
+    font-size: 0.75rem;
+    color: #9ca3af;
+    text-align: center;
+    margin-top: 10px;
+    font-style: italic;
+  }
+  @media (max-width: 560px) {
+    .mcp-tri-row { flex-direction: column; }
+    .mcp-connectors { flex-direction: row; padding: 8px 0; gap: 20px; }
+    .mcp-servers-col { flex-direction: row; }
+  }
+`}</style>
+
+<div class="mcp-triangle" role="img" aria-label="Host-client-server triangle: Claude Code (host) contains two client connectors, each wired to a separate MCP server. Both servers' tools merge into one list the LLM sees.">
+  <div class="mcp-tri-row">
+    {/* Host */}
+    <div class="mcp-host">
+      <div class="mcp-host-label">Host</div>
+      <div class="mcp-host-name">Claude Code</div>
+      <div style="font-size:0.75rem;color:#4338ca;margin-bottom:8px;">
+        Manages security, consent, token budget
+      </div>
+      <div class="mcp-clients">
+        <div class="mcp-client">
+          <div class="mcp-client-label">Client A</div>
+          <div class="mcp-client-sub">one per server</div>
+        </div>
+        <div class="mcp-client">
+          <div class="mcp-client-label">Client B</div>
+          <div class="mcp-client-sub">one per server</div>
+        </div>
+      </div>
+    </div>
+
+    {/* Connectors */}
+    <div class="mcp-connectors">
+      <div class="mcp-connector-line">
+        <span class="mcp-arrow">→</span>
+        <span>JSON-RPC 2.0<br/>stdio / HTTP</span>
+      </div>
+      <div class="mcp-connector-line">
+        <span class="mcp-arrow">→</span>
+        <span>JSON-RPC 2.0<br/>stdio / HTTP</span>
+      </div>
+    </div>
+
+    {/* Servers */}
+    <div class="mcp-servers-col">
+      <div class="mcp-server">
+        <div class="mcp-server-label">Server</div>
+        <div class="mcp-server-name">github</div>
+        <span class="mcp-server-badge">http</span>
+        <div class="mcp-server-tools">create_pull_request, list_pull_requests</div>
+      </div>
+      <div class="mcp-server">
+        <div class="mcp-server-label">Server</div>
+        <div class="mcp-server-name">filesystem</div>
+        <span class="mcp-server-badge">stdio</span>
+        <div class="mcp-server-tools">read_file, list_directory</div>
+      </div>
+    </div>
+  </div>
+
+  {/* Merged tool list */}
+  <div class="mcp-merged">
+    <div class="mcp-merged-label">LLM's merged tool list (what the model sees)</div>
+    <div class="mcp-merged-tools">
+      <span class="mcp-merged-tool">create_pull_request</span>
+      <span class="mcp-merged-tool">list_pull_requests</span>
+      <span class="mcp-merged-tool">read_file</span>
+      <span class="mcp-merged-tool">list_directory</span>
+      <span class="mcp-merged-tool">+ built-in tools…</span>
+    </div>
+  </div>
+  <div class="mcp-caption">Two servers, one model, one merged tool list. The model cannot distinguish MCP-sourced tools from built-in ones.</div>
+</div>
+
+**Host** — the application embedding the LLM. Claude Code is a host. VS Code Copilot is a host. The host creates clients, enforces security policies, handles user consent, and decides what the model sees.
+
+**Client** — a connector that lives inside the host, one per server connection. Each client maintains a stateful session with one MCP server, handles protocol negotiation, and routes messages bidirectionally.
+
+**Server** — a process or remote service that advertises capabilities. A server can be a local subprocess (a Python script, a Node package via `stdio`) or a remote HTTPS endpoint. A server has no visibility into the conversation history and does not know what other servers are connected to the same host.
+
+---
+
+## The wire: JSON-RPC 2.0
+
+At the transport level, MCP is entirely standard. Every message is a JSON-RPC 2.0 object over a transport. There is nothing proprietary about the wire format.
+
+**Transports.** Two are current: **stdio** (the client launches the server as a child subprocess; messages flow over stdin/stdout) and **Streamable HTTP** (the server runs as an independent process exposed via a single HTTP endpoint that accepts POST requests and can respond with SSE streams for async notifications). A third transport — HTTP+SSE from protocol version `2024-11-05` — is **deprecated** as of `2025-03-26` but still supported by Claude Code for backwards compatibility.
+
+**Initialization handshake.** Before any tool is called, client and server negotiate capability. The client sends an `initialize` request with its protocol version and capabilities. The server responds with the version it will use and what it offers. Then the client sends `notifications/initialized` to signal readiness.
+
+**Method vocabulary.** The spec defines a small set of methods:
+
+| Category | Key methods |
+|---|---|
+| Tools | `tools/list`, `tools/call` |
+| Resources | `resources/list`, `resources/read` |
+| Prompts | `prompts/list`, `prompts/get` |
+| Sampling | `sampling/createMessage` (server → client) |
+| Lifecycle | `initialize`, `notifications/initialized` |
+
+---
+
+## Three primitives — distinguished by who controls invocation
+
+The spec defines three server-side primitives. They are often conflated. The spec separates them by *who decides when to invoke them*.
+
+**Tools — model-controlled.** Tools are functions the LLM can call. The model decides when and whether to invoke them. On session start, the host calls `tools/list` on each server, receives JSON Schema–described function definitions, and injects them into the `tools` array of every API request. The model emits a `tool_use` block; the host routes it via `tools/call` to the right server; the result returns as a `tool_result` block. The model cannot distinguish an MCP-sourced tool from a built-in one — both arrive as entries in the same array.
+
+**Resources — application-controlled.** Resources are content the host can expose to the model: files, database schemas, web pages — anything with a URI. The *host* (not the model) decides which resources to fetch via `resources/read` and how to inject them into context. The model does not call `resources/read` directly.
+
+**Prompts — user-controlled.** Prompts are named templates the user explicitly invokes — think slash commands. A `prompts/get` request with arguments returns a structured message sequence the host can inject into the conversation. Prompts are the least commonly discussed primitive and the most likely to be absent from a given server.
+
+---
+
+## The sampling reverse channel
+
+Most MCP introductions skip sampling. It is worth understanding.
+
+In every other primitive, the flow is client → server. Sampling reverses this: a server can send a `sampling/createMessage` request to the *client*, asking the host to run model inference on the server's behalf. A documentation-indexing server that needs to summarize files can use the host's LLM rather than maintaining its own API key. The server sends a `sampling/createMessage` with messages and model preferences; the host processes it — potentially showing a confirmation dialog — and returns the model's response.
+
+Three design choices matter here. First, the server needs no API key. Second, the host maintains control: the spec requires hosts to provide UI for users to review sampling requests. Third, model selection is preference-based: the server expresses hints and priority weights, but the client makes the final selection.
+
+---
+
+## Cache interaction: MCP enlarges the silent-invalidator surface
+
+Chapter 7 showed the anatomy of a Claude Code request:
+
+<style>{`
+  .mcp-anatomy {
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    margin: 20px 0 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .mcp-seg {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    border-radius: 6px;
+    padding: 10px 6px 8px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-align: center;
+    position: relative;
+    line-height: 1.3;
+    color: #374151;
+    border: 2px solid transparent;
+    min-width: 72px;
+  }
+  .mcp-seg .seg-tokens {
+    display: block;
+    font-size: 0.64rem;
+    font-weight: 400;
+    color: #6b7280;
+    margin-top: 4px;
+    font-family: ui-monospace, monospace;
+  }
+  .mcp-seg .bp-marker {
+    position: absolute;
+    right: -3px;
+    top: -4px;
+    bottom: -4px;
+    width: 3px;
+    background: #6366f1;
+    border-radius: 2px;
+    z-index: 1;
+  }
+  .mcp-seg .bp-label {
+    position: absolute;
+    right: -22px;
+    top: -20px;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #6366f1;
+    white-space: nowrap;
+    background: #fff;
+    padding: 0 2px;
+  }
+  .mcp-seg-highlight {
+    box-shadow: 0 0 0 3px #f59e0b;
+  }
+  .mcp-anatomy-note {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 6px;
+  }
+`}</style>
+
+<div class="mcp-anatomy" role="img" aria-label="Anatomy of a Claude Code request. The tool-defs segment (highlighted in amber) receives all MCP server tool definitions. A cache breakpoint sits after it.">
+  <div class="mcp-seg" style="background:#e0e7ff;border-color:#818cf8;height:80px;">
+    System prompt
+    <span class="seg-tokens">~800 tkns</span>
+    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
+  </div>
+  <div class="mcp-seg mcp-seg-highlight" style="background:#fef3c7;border-color:#f59e0b;height:100px;">
+    Tool defs
+    <span class="seg-tokens">~1,200+ tkns</span>
+    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
+  </div>
+  <div class="mcp-seg" style="background:#dcfce7;border-color:#4ade80;height:110px;min-width:90px;">
+    Read files
+    <span class="seg-tokens">~3,500 tkns</span>
+    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
+  </div>
+  <div class="mcp-seg" style="background:#f1f5f9;border-color:#94a3b8;height:68px;">
+    History
+    <span class="seg-tokens">~600 tkns</span>
+  </div>
+  <div class="mcp-seg" style="background:#f8fafc;border-color:#cbd5e1;height:56px;">
+    New turn
+    <span class="seg-tokens">~120 tkns</span>
+  </div>
+</div>
+<div class="mcp-anatomy-note">The amber-highlighted segment is where MCP server tool definitions land.</div>
+
+The **tool-defs segment** (amber, above) is where every connected MCP server's tool definitions land — merged into the same `tools` array Claude Code sends on every request. When the cache hits, the work of processing all those tool descriptions is served cheaply from cache. When it misses, every token is reprocessed at full cost.
+
+**Adding a server invalidates the segment.** When you add an MCP server, its tool definitions are appended to the tools segment, changing its token sequence. The existing cache entry no longer matches. The next request is a cold miss — for that segment and everything downstream.
+
+**Remote server operators can trigger this without touching your config.** If you are using a remote MCP server and its operator updates tool definitions — rewrites a description, adds a parameter, releases a new tool — the next time Claude Code fetches the tool list (at session start, or via a `notifications/tools/list_changed` notification), the tools segment changes. Your cache goes cold with no warning. This is Ch 7's silent invalidator with a concrete mechanism: your MCP server redeployed.
+
+**More servers = more invalidation surface.** Ten MCP servers might contribute 3,000–5,000 additional tokens to the tools segment. A larger segment means a larger blast radius: one changed tool invalidates the cache savings from all others in that segment, because the whole segment is one cache unit.
+
+---
+
+## Interactive demo: servers, tools, and cache state
+
+Toggle MCP servers on and off. Watch the host's merged tool list grow and the tool-defs segment size change. Flip the "simulate server update" sub-toggle on any enabled server to see cache invalidation in action.
+
+<MCPServers client:visible />
+
+---
+
+## Three misconceptions
+
+**"MCP is an Anthropic feature."** No. MCP is an open protocol that Anthropic created and open-sourced. The specification is maintained under the `modelcontextprotocol` GitHub organization, not Anthropic's. Confirmed adopters include Claude, ChatGPT, VS Code Copilot, and Cursor. A server you write for Claude Code also works in ChatGPT with no modification.
+
+**"More MCP servers = more capable."** Often the opposite. As the tool list grows, the model faces a harder selection problem. Tool selection errors increase. The model may call a plausible-looking tool instead of the correct one, or be confused by overlapping descriptions from multiple servers. Curate; do not accumulate.
+
+**"MCP servers run in the model."** No. MCP servers are processes — local subprocesses or remote HTTP services. They run on your machine or a remote server. The model never executes code. The model emits a `tool_use` block (structured text); the host reads it, routes it to the right MCP server via `tools/call`, gets the result, and returns it to the model as a `tool_result`. The model has no socket, no subprocess, and no direct connection to anything.
+
+---
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/mcp.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+  MCP servers extend Ch 7's silent-invalidator surface beyond your own code. Every server you connect adds its tool definitions to the cached tool-defs segment — the same segment Ch 7 identified as the second cache breakpoint in every Claude Code request. Any server's tool update, whether you caused it or a remote operator did, invalidates that segment cold. More servers means more tokens in the segment and more independent sources of invalidation. Treat MCP server configurations like production dependencies: pin versions where possible, batch updates to minimize cold sessions, and audit tool description changes before upgrading.
 </CacheCallout>
