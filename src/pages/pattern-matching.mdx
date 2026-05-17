@@ -7,10 +7,246 @@ prev: "/search-engines"
 next: "/data-search"
 ---
 
+import PatternMatchStepper from '../components/PatternMatchStepper.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/pattern-matching-algorithms.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+You press Ctrl+F, type a word, and every occurrence lights up before you've blinked. You run `ripgrep "TODO" .` across a ten-million-line repo and get results in under a second. You type "fhe" into your editor's file picker and `fooHelper.ts` rises to the top. Each of these is a different algorithm, making a different tradeoff.
+
+The organizing question is **what does the algorithm do on a mismatch?** The naive approach goes back one step and tries again. KMP jumps to the furthest safe restart. Boyer-Moore skips multiple characters in one shot. Rabin-Karp hashes the current window. Aho-Corasick never restarts at all because it runs all patterns simultaneously. Each is a different answer to the same question.
+
+## The naive baseline
+
+For every starting position in the text, check whether the pattern matches there. On mismatch, advance by one and retry.
+
+```
+Text:    A B A B A B C
+Pattern: A B A B C
+                 ^ fail (A≠C) → slide one right and restart
+```
+
+Worst case is O(N×M) — a 1,000-char pattern in a 1,000,000-char text could need a billion comparisons. In practice on English text or source code, mismatches happen on the first or second character, so naive is effectively linear on real inputs. Ctrl+F in a five-page document doesn't need anything smarter.
+
+## KMP — preprocess once, never re-scan
+
+When the naive algorithm hits a mismatch after matching `k` characters, it throws away everything it learned. KMP saves that work in a **failure table** — one entry per pattern position, computed from the pattern alone.
+
+Each entry answers: "if matching fails here, what is the longest prefix of the pattern that is also a suffix of what we just matched?" That tells us the furthest safe restart, so we never back up in the text.
+
+For pattern `ABABC` the table is `[0, 0, 1, 2, 0]`. Matching `ABAB` then failing on `C` uses `table[3]=2`: instead of restarting at text position 1, we jump the pattern forward two and resume at `pattern[2]` — reusing the `AB` we already confirmed.
+
+KMP guarantees linear time. In practice it shows up less often than you'd expect: on short patterns in random text, naive with early exits is often faster due to smaller constant factors. KMP matters most in streaming contexts (network packet inspection, embedded systems) and as the conceptual core underneath Aho-Corasick.
+
+## Boyer-Moore — right-to-left, multi-character skip
+
+Boyer-Moore starts comparing from the **right end of the pattern**, not the left. This is counterintuitive but powerful: if the last character of the pattern doesn't appear anywhere in the text window, you skip the entire pattern length in one shot.
+
+**Bad-character rule:** on mismatch, look at the text character that caused it. If it doesn't appear in the pattern, shift the whole pattern past it. If it does appear, align the rightmost occurrence in the pattern with that character in the text.
+
+**Good-suffix rule:** if the rightmost portion of the pattern already matched, find the next occurrence of that suffix earlier in the pattern and align it.
+
+```
+Text:    H E R E   I S   A   S I M P L E   E X A M P L E
+Pattern: E X A M P L E
+               ^compare from right: S≠E → 'S' not in pattern → skip 7
+Pattern:               E X A M P L E
+                               ^L≠E → align L → shift 1 …
+```
+
+On English text with long patterns, Boyer-Moore examines roughly 1/4 of the characters — "sublinear in practice." GNU `grep` uses a Boyer-Moore variant as its primary algorithm for literal patterns.
+
+## Rabin-Karp — rolling hash
+
+Rabin-Karp treats each window of text as a hash value. Sliding the window by one character is cheap: subtract the character leaving on the left, add the character entering on the right, one arithmetic operation. If the hash matches the pattern's hash, do a character-by-character check to confirm. Rabin-Karp shines when searching for many patterns simultaneously: hash all patterns once, then compare each window hash against the whole set in O(1). Single-pattern search: prefer Boyer-Moore.
+
+## Aho-Corasick — all patterns at once
+
+You have not one pattern but thousands: banned words, malware signatures, brand names. Running each through Boyer-Moore would scan the text thousands of times. Aho-Corasick scans the text **exactly once** and finds all matches.
+
+Build a prefix trie from all patterns, then add KMP-style "failure links" between nodes. The result is a finite automaton: read one character, take one state transition. When the current state is a pattern endpoint, record a match. The text is never re-scanned regardless of how many patterns you have. `fgrep` (the original fast grep) was built on Aho-Corasick. Andrew Gallant's Rust `aho-corasick` crate — used inside ripgrep — handles alternation patterns (`import (React|useState)`) this way.
+
+## Regex engine families
+
+<div class="pm-misconception">
+  <strong>Misconception 1: "regex" means one thing.</strong> There are two fundamentally different engine families that look identical from outside.
+</div>
+
+The word "regex" covers two completely different engine families with opposite performance contracts:
+
+<div class="pm-family-tree" aria-label="Regex engine family comparison diagram">
+  <div class="pm-family-col pm-family-col--re2">
+    <div class="pm-family-head">RE2 / Thompson NFA</div>
+    <div class="pm-family-tools">
+      <span class="pm-tool">RE2 (C++)</span>
+      <span class="pm-tool">Go regexp</span>
+      <span class="pm-tool">Rust regex</span>
+      <span class="pm-tool">ripgrep</span>
+    </div>
+    <ul class="pm-family-caps">
+      <li class="pm-cap pm-cap--yes">Linear time O(N) guaranteed</li>
+      <li class="pm-cap pm-cap--no">Backreferences (<code>\1</code>)</li>
+      <li class="pm-cap pm-cap--no">Lookahead / lookbehind</li>
+      <li class="pm-cap pm-cap--yes">Safe on adversarial input</li>
+    </ul>
+    <div class="pm-family-note">Tracks all possible match states in parallel — never backtracks.</div>
+  </div>
+  <div class="pm-family-divider" aria-hidden="true">vs</div>
+  <div class="pm-family-col pm-family-col--pcre">
+    <div class="pm-family-head">PCRE / Backtracking</div>
+    <div class="pm-family-tools">
+      <span class="pm-tool">Perl</span>
+      <span class="pm-tool">Python re</span>
+      <span class="pm-tool">JS RegExp</span>
+      <span class="pm-tool">Java java.util.regex</span>
+      <span class="pm-tool">PCRE2</span>
+    </div>
+    <ul class="pm-family-caps">
+      <li class="pm-cap pm-cap--no">Linear time O(N) guaranteed</li>
+      <li class="pm-cap pm-cap--yes">Backreferences (<code>\1</code>)</li>
+      <li class="pm-cap pm-cap--yes">Lookahead / lookbehind</li>
+      <li class="pm-cap pm-cap--warn">Exponential worst case possible</li>
+    </ul>
+    <div class="pm-family-note">Tries one path; backs up and tries another on failure.</div>
+  </div>
+</div>
+
+**How to tell which family you're using:** if the documentation says "RE2-compatible" or uses RE2 or Rust's `regex` crate, you're in the safe family. If it says "Perl-compatible" or "PCRE," you're in the backtracking family.
+
+### The 2019 Cloudflare outage
+
+On July 2, 2019, Cloudflare suffered a global 27-minute outage. A new WAF rule contained the sub-expression `.*.*=.*`. For an input like `x=` followed by many `x`s, the PCRE engine explored exponentially many ways to split the `.*.*` before concluding no match. The Cloudflare postmortem documented 555 backtracking steps for `x=` followed by 20 `x`s; a closely related pattern needed 5,353 steps for the same input. CPU pinned at ~100% across global infrastructure. Not an attack — a single poorly-reviewed regex deployed globally.
+
+RE2 would have refused `.*.*=.*` at compile time, substituting a safe equivalent. The tradeoff: you lose the ability to write catastrophically backtracking patterns, but also lose backreferences.
+
+<div class="pm-misconception">
+  <strong>Misconception 2: ripgrep is fast because it uses a smarter algorithm.</strong>
+</div>
+
+## Why ripgrep is actually fast
+
+ripgrep uses Thompson NFA — the same RE2 family, no exotic algorithm. Its speed comes from:
+
+1. **SIMD prefilter (Teddy algorithm):** processes 16 bytes per CPU instruction. Memory bandwidth on a modern desktop is ~40–60 GB/s; a byte-at-a-time scan uses maybe 5–8 GB/s of that. SIMD fills the bus. The algorithmic cleverness of KMP or Boyer-Moore at the character level matters less than whether you're using the CPU's vector units at all.
+
+2. **`.gitignore` awareness:** on a typical Node project, `node_modules/` contains hundreds of megabytes. ripgrep skips it by default. Avoiding that traversal is as important as the SIMD code for real-world speed.
+
+3. **Parallel file search:** multiple files searched concurrently across CPU cores.
+
+ripgrep does use Boyer-Moore concepts for its literal-byte prefilter, and it picks the "rarest" byte in the pattern (not just the last byte) to minimize false candidates. But the core reason it returns results in milliseconds across a 5GB monorepo is memory bandwidth utilization plus smart directory skipping, not a fundamentally different algorithm.
+
+## Fuzzy matching
+
+<div class="pm-misconception">
+  <strong>Misconception 3: fuzzy matching = Levenshtein distance.</strong>
+</div>
+
+Levenshtein distance counts the minimum single-character edits (insert, delete, substitute) between two strings. It's the right metric for spell-checkers: "which dictionary word is closest in character-change cost?" Apache Lucene uses Levenshtein automata for its fuzzy queries. BK-trees index a dictionary by edit distance for efficient nearest-neighbor lookup.
+
+But **production fuzzy finders** — fzf, IDE "open file" dialogs, GitHub file search — don't use pure edit distance. They use bonus-weighted scoring. fzf rewards:
+
+- A match at a word boundary or path separator (`/`, `_`, `-`): +9 points
+- A camelCase transition: +7 points
+- Start-of-filename: +2× multiplier on bonuses
+
+Pure Levenshtein would rank "fhe" equally against `fhe_misc.ts` and `fooHelper.ts` — both are a few insertions away. Bonus scoring makes `fooHelper.ts` win by a large margin because `f`, `H`, and `e` are all at boundary-adjacent positions, matching how humans actually abbreviate identifiers.
+
+Levenshtein = "minimum edits." fzf = "matches my abbreviation style." Different questions, different algorithms.
+
+## Step through the algorithms
+
+<PatternMatchStepper client:visible />
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/pattern-matching-algorithms.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+**Pattern matching is the lookup primitive.** The exact-prefix-match rule that governs Claude Code's prompt cache (from Ch 7) is pattern matching at the token level: the system scans the incoming request for the longest cached prefix and either hits or misses. No fuzzy matching, no semantic similarity — exact token equality, left to right, up to a breakpoint.
+
+**ripgrep is Claude Code's daily workhorse.** When Claude Code runs a Grep tool call to search your codebase, it uses ripgrep with RE2 semantics: linear time, no catastrophic backtracking, SIMD-accelerated, `.gitignore`-aware. The speed you observe when the agent searches a large monorepo in milliseconds is SIMD + traversal smarts, not a smarter string algorithm.
+
+**The exact↔semantic axis.** This chapter covers exact matching — the pattern is either there or it isn't, and the goal is to find it fast. The counterpart is [semantic / vector search](/vector-search): instead of "does this byte sequence appear?", the question becomes "what content is *similar in meaning* to this query?" Real-world systems layer both: ripgrep for exact-match filtering, vector search for relevance ranking. See [/data-search](/data-search) for how databases combine both with storage layout.
+
 </CacheCallout>
+
+<style>{`
+  .pm-misconception {
+    background: #f0f4ff;
+    border-left: 4px solid var(--color-accent);
+    border-radius: var(--radius);
+    padding: var(--space-3) var(--space-4);
+    margin: var(--space-6) 0 var(--space-4);
+    font-size: 0.9rem;
+  }
+
+  .pm-family-tree {
+    display: flex;
+    gap: var(--space-4);
+    align-items: stretch;
+    margin: var(--space-6) 0;
+    flex-wrap: wrap;
+  }
+
+  .pm-family-col {
+    flex: 1 1 260px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-4);
+  }
+
+  .pm-family-col--re2 { border-top: 4px solid #22c55e; }
+  .pm-family-col--pcre { border-top: 4px solid #f97316; }
+
+  .pm-family-head {
+    font-weight: 700;
+    font-size: 0.95rem;
+    margin-bottom: var(--space-3);
+  }
+
+  .pm-family-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+  }
+
+  .pm-tool {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 3px;
+    padding: 1px 6px;
+  }
+
+  .pm-family-caps {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-3);
+  }
+
+  .pm-cap {
+    font-size: 0.85rem;
+    padding: 2px 0;
+    display: flex;
+    gap: var(--space-2);
+    align-items: center;
+  }
+
+  .pm-cap::before { font-size: 0.9rem; }
+  .pm-cap--yes::before { content: "✓"; color: #22c55e; }
+  .pm-cap--no::before { content: "✗"; color: #9ca3af; }
+  .pm-cap--warn::before { content: "⚠"; color: #f97316; }
+
+  .pm-family-note {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    font-style: italic;
+  }
+
+  .pm-family-divider {
+    display: flex;
+    align-items: center;
+    font-size: 0.75rem;
+    color: var(--color-muted);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    align-self: center;
+  }
+`}</style>
