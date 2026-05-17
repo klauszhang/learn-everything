@@ -2,15 +2,468 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Agents and agent loops"
 chapterNumber: null
-takeaway: "Agents are iterated tool-use with a budget. Why the prompt cache is the economic substrate that makes multi-step affordable."
+takeaway: "An agent is an iterated tool-use loop, not a smarter model. Prompt cache is what keeps long runs economically feasible."
 prev: "/long-context"
 next: "/mcp"
 ---
 
+import AgentLoopStep from '../components/AgentLoopStep.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/agents-and-agent-loops.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+<style>{`
+  /* ── Loop-unrolled diagram ─────────────────────────────────────────── */
+  .loop-diagram {
+    margin: 28px 0 8px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .loop-turns {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+    min-width: 520px;
+  }
+  .loop-turn {
+    flex: 1;
+    border-radius: 0;
+    border: 1.5px solid transparent;
+    padding: 10px 8px 8px;
+    text-align: center;
+    font-size: 0.72rem;
+    font-weight: 600;
+    line-height: 1.35;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 4px;
+  }
+  .loop-turn:first-child { border-radius: 6px 0 0 6px; }
+  .loop-turn:last-child  { border-radius: 0 6px 6px 0; }
+  .loop-turn--model {
+    background: #eef2ff;
+    border-color: #818cf8;
+    color: #3730a3;
+  }
+  .loop-turn--result {
+    background: #f8fafc;
+    border-color: #94a3b8;
+    color: #475569;
+  }
+  .loop-turn--final {
+    background: #f0fdf4;
+    border-color: #4ade80;
+    color: #166534;
+  }
+  .loop-turn__arrow {
+    font-size: 1rem;
+    color: #a5b4fc;
+    line-height: 1;
+  }
+  .loop-turn--result .loop-turn__arrow { color: #94a3b8; }
+  .loop-turn--final  .loop-turn__arrow { color: #4ade80; }
+
+  /* Context bar below turns */
+  .loop-context-bar {
+    margin-top: 6px;
+    min-width: 520px;
+  }
+  .loop-context-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.68rem;
+    color: #6b7280;
+    margin-bottom: 4px;
+  }
+  .loop-context-track {
+    height: 20px;
+    border-radius: 4px;
+    background: #f1f5f9;
+    overflow: hidden;
+    display: flex;
+    border: 1px solid #e2e8f0;
+    position: relative;
+  }
+  .loop-context-cached {
+    background: #f59e0b;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: #78350f;
+    white-space: nowrap;
+    overflow: hidden;
+    padding-left: 4px;
+  }
+  .loop-context-history {
+    background: #e2e8f0;
+    height: 100%;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    font-size: 0.6rem;
+    color: #64748b;
+    padding-right: 4px;
+    white-space: nowrap;
+  }
+  .loop-callout-arrow {
+    font-size: 0.68rem;
+    color: #92400e;
+    margin-top: 6px;
+    padding-left: 2px;
+  }
+
+  /* Diagram legend */
+  .loop-legend {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: #6b7280;
+    margin-top: 10px;
+    margin-bottom: 24px;
+  }
+  .loop-legend span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .loop-legend .sw {
+    display: inline-block;
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    border: 1.5px solid #94a3b8;
+    flex-shrink: 0;
+  }
+
+  /* Patterns table */
+  .patterns-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.84rem;
+    margin: 20px 0 28px;
+  }
+  .patterns-table th {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: 700;
+    font-size: 0.76rem;
+    color: #374151;
+    letter-spacing: 0.03em;
+  }
+  .patterns-table td {
+    border: 1px solid #e2e8f0;
+    padding: 8px 12px;
+    vertical-align: top;
+    color: #374151;
+    line-height: 1.5;
+  }
+  .patterns-table tr:nth-child(even) td { background: #fafafa; }
+
+  /* Failure modes list */
+  .failure-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+  }
+  .failure-list li {
+    border-left: 3px solid #f87171;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    background: #fff5f5;
+    border-radius: 0 6px 6px 0;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: #374151;
+  }
+  .failure-list li strong {
+    color: #b91c1c;
+  }
+  .failure-list li.failure-cache {
+    border-left-color: #f59e0b;
+    background: #fffbeb;
+  }
+  .failure-list li.failure-cache strong { color: #92400e; }
+
+  /* Misconceptions */
+  .misconceptions {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 20px;
+  }
+  .misconceptions li {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    font-size: 0.87rem;
+    line-height: 1.6;
+    color: #374151;
+  }
+  .misconceptions li .myth {
+    font-weight: 700;
+    color: #dc2626;
+    font-size: 0.83rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .misconceptions li .reality {
+    color: #374151;
+  }
+`}</style>
+
+## Claude Code is thinking — what's actually happening?
+
+You type "fix the failing tests in auth.ts" and Claude Code runs for ninety seconds. File reads appear. An edit flashes by. Tests run. More edits. Tests again. Done.
+
+It looks like Claude is doing something fundamentally different from single-turn chat. It is not. What you are watching is a **tool-use loop**: the model emits a tool call, your harness runs the tool and sends the result back, the model sees the expanded conversation and emits another tool call, and this cycle repeats until the model produces a response with no tool call embedded. Every cycle is one *turn*. Every turn is a new API request. Everything else that gets marketed as "agentic" is layered on top of this.
+
+---
+
+## An agent is iterated tool use
+
+In the tool-use chapter, you saw the single-turn cycle: model emits `tool_use`, harness runs the function, harness returns `tool_result`, model responds. An agent is that cycle running until the model decides to stop — or until the harness cuts it off.
+
+The minimal agent has three parts:
+
+**A loop.** The harness runs `while stop_reason == "tool_use": run_tool(); send_result()`. That is the entire engine.
+
+**A system prompt with stopping criteria.** The model needs to know what "done" looks like. Without explicit stopping instructions, the loop can run indefinitely — each tool result suggests another tool call and the model never converges. "Stop when all tests pass" is better than "stop when you think you're done."
+
+**Harness-enforced budgets.** The model decides when to stop, but it can be wrong. The harness enforces hard ceilings: `max_turns`, wall-clock time, maximum spend. Without these, a misconfigured agent is an open billing tab.
+
+---
+
+## The loop, unrolled
+
+Here is the ninety-second auth-fix session from above, step by step. Each column is one turn. Below the turns, the context-window bar grows with each step — the amber portion is the cached prefix (system prompt + tool definitions), which stays fixed; the grey portion is the conversation history, which accumulates one turn at a time.
+
+<div class="loop-diagram" role="img" aria-label="Agent loop unrolled: alternating model output and tool result turns, with growing context bar below">
+  <div class="loop-turns">
+    <div class="loop-turn loop-turn--model">
+      <div class="loop-turn__arrow">&#8595;</div>
+      <div>Turn 1</div>
+      <div style="font-size:0.65rem;font-weight:400;color:#4338ca">Bash: npm test</div>
+    </div>
+    <div class="loop-turn loop-turn--result">
+      <div class="loop-turn__arrow">&#8593;</div>
+      <div>Result 1</div>
+      <div style="font-size:0.65rem;font-weight:400">3 failures</div>
+    </div>
+    <div class="loop-turn loop-turn--model">
+      <div class="loop-turn__arrow">&#8595;</div>
+      <div>Turn 2</div>
+      <div style="font-size:0.65rem;font-weight:400;color:#4338ca">Read: auth.ts</div>
+    </div>
+    <div class="loop-turn loop-turn--result">
+      <div class="loop-turn__arrow">&#8593;</div>
+      <div>Result 2</div>
+      <div style="font-size:0.65rem;font-weight:400">File contents</div>
+    </div>
+    <div class="loop-turn loop-turn--model">
+      <div class="loop-turn__arrow">&#8595;</div>
+      <div>Turn 3</div>
+      <div style="font-size:0.65rem;font-weight:400;color:#4338ca">Edit: line 83</div>
+    </div>
+    <div class="loop-turn loop-turn--result">
+      <div class="loop-turn__arrow">&#8593;</div>
+      <div>Result 3</div>
+      <div style="font-size:0.65rem;font-weight:400">Edit confirmed</div>
+    </div>
+    <div class="loop-turn loop-turn--model">
+      <div class="loop-turn__arrow">&#8595;</div>
+      <div>Turn 4</div>
+      <div style="font-size:0.65rem;font-weight:400;color:#4338ca">Bash: npm test</div>
+    </div>
+    <div class="loop-turn loop-turn--result">
+      <div class="loop-turn__arrow">&#8593;</div>
+      <div>Result 4</div>
+      <div style="font-size:0.65rem;font-weight:400">All pass</div>
+    </div>
+    <div class="loop-turn loop-turn--final">
+      <div class="loop-turn__arrow">&#10003;</div>
+      <div>Final</div>
+      <div style="font-size:0.65rem;font-weight:400">No tool call &#8212; loop exits</div>
+    </div>
+  </div>
+
+  <div class="loop-context-bar">
+    <div class="loop-context-label">
+      <span>Context window (illustrative)</span>
+      <span>grows &#8594; each turn costs more</span>
+    </div>
+    <div class="loop-context-track">
+      <div class="loop-context-cached" style="width:26%">cached prefix</div>
+      <div class="loop-context-history">conversation history grows here &#8594;</div>
+    </div>
+    <div class="loop-callout-arrow">&#9650; amber = prompt cache at work &#8212; see Chapter 7</div>
+  </div>
+</div>
+
+<div class="loop-legend">
+  <span><span class="sw" style="background:#eef2ff;border-color:#818cf8;"></span> Model output with tool call</span>
+  <span><span class="sw" style="background:#f8fafc;border-color:#94a3b8;"></span> Tool result (returned to model)</span>
+  <span><span class="sw" style="background:#f0fdf4;border-color:#4ade80;"></span> Final answer &#8212; no tool call</span>
+  <span><span class="sw" style="background:#f59e0b;border-color:#d97706;"></span> Cached prefix (system prompt + tool defs)</span>
+  <span><span class="sw" style="background:#e2e8f0;border-color:#94a3b8;"></span> Conversation history &#8212; fresh compute per turn</span>
+</div>
+
+---
+
+## Workflows vs. agents — who controls the loop?
+
+Anthropic draws a line that matters in practice.
+
+**Workflow:** LLMs and tools orchestrated through predefined code paths. You, the developer, design the control flow. The model fills in each designated step. Predictable, testable, cheaper.
+
+**Agent:** The model dynamically directs its own processes and tool use. You give the model a goal and tools; it decides the steps. More flexible, harder to predict, more expensive to debug.
+
+The distinction is about *who controls the loop*. In a workflow, your code determines what happens next. In an agent, the model's output determines what happens next.
+
+Anthropic's practical advice: "Start with simple prompts, optimize them with comprehensive evaluation, and add multi-step agentic systems only when simpler solutions fall short." Most production "AI agents" are workflows in disguise — and that is often exactly the right call. A workflow is easier to audit, cheaper to run, and predictable enough to test. The payoff from a true agent (model-directed control flow) only materializes when the task is open-ended enough that you genuinely cannot enumerate the steps in advance.
+
+A useful heuristic: can you draw a flowchart for the task before the model runs? If yes, that flowchart should probably be your code, not the model's emergent behavior. If you cannot — because the steps depend on what you discover along the way — then you need a true agent.
+
+---
+
+## Five published patterns
+
+All five patterns sit on the tool-use loop. The distinction between them is how many models are involved and how results flow.
+
+<table class="patterns-table">
+  <thead>
+    <tr>
+      <th>Pattern</th>
+      <th>Who controls flow</th>
+      <th>When to use</th>
+      <th>Watch out for</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Prompt chaining</strong></td>
+      <td>Developer (sequential calls)</td>
+      <td>Tasks decomposing cleanly into ordered subtasks (outline &#8594; expand &#8594; translate)</td>
+      <td>Rigid chain cannot adapt if an early step produces garbage</td>
+    </tr>
+    <tr>
+      <td><strong>Routing</strong></td>
+      <td>Developer (branches on classifier label)</td>
+      <td>Inputs fall into distinct categories with different handling (billing vs. technical)</td>
+      <td>Overlapping categories or a miscalibrated classifier creates silent failures</td>
+    </tr>
+    <tr>
+      <td><strong>Parallelization</strong></td>
+      <td>Developer (fan-out + fan-in)</td>
+      <td>Independent subtasks where wall-clock time matters; or voting for higher confidence</td>
+      <td>Each parallel branch pays full prefill &#8212; parallel is faster, not cheaper</td>
+    </tr>
+    <tr>
+      <td><strong>Orchestrator-workers</strong></td>
+      <td>Model (orchestrator decides decomposition)</td>
+      <td>Open-ended problems where subtask decomposition cannot be predicted in advance</td>
+      <td>Adds latency and cost; if you already know the steps, hard-code them</td>
+    </tr>
+    <tr>
+      <td><strong>Evaluator-optimizer</strong></td>
+      <td>Model (loop with critic)</td>
+      <td>Tasks with clear evaluation criteria where iterative refinement measurably improves quality</td>
+      <td>A critic that is too easy breaks the loop; subjective criteria produce runaway iteration</td>
+    </tr>
+  </tbody>
+</table>
+
+Claude Code itself is the orchestrator-workers pattern: the Claude Code harness acts as the orchestrator; individual tool calls (or subagents) are the workers.
+
+---
+
+## Subagents and isolation
+
+A subagent is a separate model context with its own system prompt and tool set, dispatched by a parent agent via the `Agent` tool. When the parent calls `Agent`, the SDK launches a fresh session — a new conversation with no prior message history — and runs it to completion. The subagent's final message returns to the parent as the tool result.
+
+The parent does not "spawn a process." It emits a `tool_use` block with name `"Agent"`, and the SDK handles the fresh context creation, execution, and result delivery. From the model's perspective, calling a subagent is just calling a tool.
+
+What the subagent receives: its own system prompt, the prompt string from the parent's `Agent` call, and its own tool set. What it does not receive: the parent's conversation history, the parent's tool results, or the parent's system prompt. **The only channel from parent to subagent is the text in the dispatch prompt.** If the subagent needs file paths, error messages, or context from the parent's session, the parent must include that information explicitly.
+
+Subagents help in three ways:
+
+- **Context isolation:** long tool-call transcripts stay inside the subagent. The parent receives a summary, not every intermediate file read. Without subagents, every tool call during exploration accumulates in the parent's context window, and every subsequent API request pays to prefill all of it.
+- **Specialization:** each subagent can have a tailored system prompt — a `security-reviewer` with vulnerability-checking guidance, without cluttering the general-purpose agent's instructions.
+- **Parallel dispatch:** multiple subagents run concurrently. The orchestrator fires three subagents simultaneously and collects results when all three complete.
+
+One hard constraint: **subagents cannot spawn subagents.** The `Agent` tool must not be included in a subagent's tool list. This prevents unbounded recursion.
+
+**Cost note on parallel subagents:** each parallel branch pays full prefill per turn. If parallel subagents share a system prompt and tool definitions with the parent, those segments can be cache-read across all of them — one cache write, N cache reads. But if each subagent has a different system prompt (security reviewer, test runner, doc generator), they cannot share a cached prefix; each pays its own cache write.
+
+---
+
+## Cache is the economic substrate
+
+This is the load-bearing section. Without it, long agent runs become untenable.
+
+Every turn in an agent loop is a new API request. The conversation history grows by at least two messages per turn: the model's tool call and the tool result. After ten turns, the history segment is twenty messages larger than at turn one. After thirty turns, sixty messages larger. Each message is tokens; each token in the prefix is prefill compute at every subsequent turn.
+
+Without a prompt cache, a thirty-turn agent run pays to prefill an increasingly long document at every single step. The cost structure is superlinear — each step pays for everything before it.
+
+**The prompt cache is what makes multi-step agents economically viable.** The stable portions of the prefix — system prompt, tool definitions, CLAUDE.md — are cache-read instead of cache-written on each turn. You pay a cache-write premium once per session start; every subsequent turn is a cache read. The amortization benefit accumulates across turns, making longer stable-prefix sessions proportionally cheaper per turn.
+
+**The silent cache invalidator in loops:** if any loop iteration modifies the system prompt or changes tool definitions, the cache goes cold from that point forward. Every subsequent turn pays full prefill — not just on the changed segment, but on everything after the invalidated breakpoint. This is the same rule from Chapter 7, but the damage compounds across every subsequent turn in the run.
+
+A specific trap: an agent that dynamically adds new tool definitions as it discovers available capabilities. Turn 1: 5 tools. Turn 5: 7 tools. Turn 12: 9 tools. Every tool-definition change invalidates the cache. The agent is paying full prefill from the tools segment to the end of history on every turn where the tool list changed — which may be most of them. Design tool sets to be stable. If dynamic tool discovery is needed, the subagent mechanism is the correct isolation: let a subagent handle the dynamic portion in its own fresh context, without polluting the parent's tool list.
+
+**One more detail:** very long agent runs can outlive their cache entries. Cache TTLs (5 minutes by default; 1 hour on the extended tier) mean entries written at turn 1 may have expired by turn 40. A run spanning more than the TTL window will experience cache misses on early segments even if nothing changed.
+
+---
+
+## Interactive demo: step through the agent trace
+
+<AgentLoopStep client:visible />
+
+---
+
+## Failure modes
+
+<ul class="failure-list">
+  <li><strong>Loops without termination.</strong> A model that receives no explicit stopping criteria can call tools indefinitely. Each tool result suggests another tool call; the model is never "done" because it never checks. Fix: explicit termination instructions in the system prompt plus harness-level turn and budget limits as a hard backstop.</li>
+  <li><strong>Context blow-up.</strong> Tool results accumulate in conversation history. A file read returns 2,000 tokens; ten file reads is 20,000 tokens that every subsequent turn must prefill. Long agentic runs become expensive and eventually incoherent as the context fills. Mitigations: subagents for subtasks (each gets its own fresh context), automatic compaction (the SDK summarizes older history), and concise tool outputs that return signal rather than raw data dumps.</li>
+  <li><strong>Confabulated tool results.</strong> If the model emits a tool_use block and the harness fails to return a corresponding tool_result, the conversation is malformed. A model receiving this malformed history may invent a plausible-sounding result and continue. Always return a tool_result for every tool_use, with is_error: true on failure. Never leave a tool call unanswered.</li>
+  <li><strong>Tool-selection bias drift.</strong> When many tools have overlapping descriptions, the model picks one based on its training priors and the description text — and it can pick the wrong one systematically. Too many tools, or too many with similar descriptions, degrades selection quality. Fewer, better-described tools consistently outperform large ambiguous inventories.</li>
+  <li class="failure-cache"><strong>Cache thrash.</strong> An agent loop that modifies its system prompt or tool definitions on each turn causes a cache miss on every step. The cost structure inverts: what should be a cheap loop becomes a full-prefill-per-step loop. The tell: a session that "feels slower than expected" despite supposedly stable content. Cause: a mid-loop change to an early segment that invalidated everything after it.</li>
+</ul>
+
+---
+
+## Three misconceptions
+
+<ul class="misconceptions">
+  <li>
+    <div class="myth">Myth: Agents are smarter</div>
+    <div class="reality">It is the same model. More agent turns means more tokens, not more intelligence. The model's capabilities per turn are unchanged. What changes is the opportunity to gather information and course-correct — but those are loop-level properties, not model-level properties. Setting max_turns to 50 on a task that needs two turns is wasteful, not helpful.</div>
+  </li>
+  <li>
+    <div class="myth">Myth: More tools = more capable agent</div>
+    <div class="reality">Usually the reverse. Too many tools with similar descriptions degrade tool-selection quality. The Anthropic blog post recommends writing tool descriptions like "docstrings for a junior developer" and testing extensively. A small, well-described tool inventory beats a large, ambiguous one. An agent with fifteen tools that all involve "reading" something will develop systematic preferences for the wrong tool based on superficial features of the request.</div>
+  </li>
+  <li>
+    <div class="myth">Myth: Parallel subagents are free</div>
+    <div class="reality">Parallel subagents run concurrently, reducing wall-clock time — but each one pays full prefill per turn. Parallelization trades money for speed. Whether that trade is worth it depends on whether the parallel branches share a cached prefix and whether the time savings justifies the spend. Parallel is faster; it is not cheaper.</div>
+  </li>
+</ul>
+
+---
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/agents-and-agent-loops.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+Claude Code looks like magic until you see the loop. Then it looks like cleverly-chained tool calls, judiciously budgeted, against a cached prefix.
+
+The model does not think harder over the course of an agent run. It thinks once per turn, exactly as it does in a single-turn conversation. What changes is that the harness catches the tool-use signal, runs the tool, hands the result back — and the model gets another turn to look at what happened and decide what to do next.
+
+The magic is the engineering: the loop structure, the termination design, the budget controls, the subagent isolation, and the prompt cache that makes the growing prefix affordable. None of these is model-level capability. All of them are harness-level design choices. Get the harness right and the model's baseline capabilities multiply. Get it wrong and you have an expensive loop that runs until it hits a rate limit.
 </CacheCallout>
