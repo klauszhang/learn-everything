@@ -1,58 +1,45 @@
-// attention.ts — illustrative (hand-authored) data for Ch 3 (03-attention.mdx)
-// These are NOT real model outputs. They are simplified mock weights for teaching.
+// attention.ts — Ch 3 attention matrix data.
+// Derived from the same Q/K vectors used in QKVProjection.tsx,
+// with a causal mask applied (token i can only attend to positions 0..i).
 //
-// Tokens represent a short English phrase: "The cat sat on the mat"
-// plus a BOS marker and a separator — 8 tokens total.
-//
-// WEIGHTS[i][j] is the attention weight token i places on token j.
-// Causal mask: only lower-triangular entries (j <= i) are non-zero.
-// Each row sums to 1.0 (softmax-style). Upper triangle is 0 (masked).
+// Sentence: "The cat sat on the mat"
+// Weights are computed via: softmax(Q_i · K_j for j <= i, -∞ for j > i)
 
 export type AttentionData = {
-  /** Token surface forms, in order. */
   tokens: string[];
-  /**
-   * Row-major attention weight matrix (N x N).
-   * weights[i][j] = how much token i attends to token j.
-   * Upper triangle (j > i) must be 0 — causal mask enforced.
-   */
   weights: number[][];
 };
 
+// Display labels (leading BPE spaces omitted for readability in the matrix UI)
 const TOKENS: string[] = [
-  "<s>",   // 0 — beginning-of-sequence marker
-  "The",   // 1
-  "cat",   // 2
-  "sat",   // 3
-  "on",    // 4
-  "the",   // 5
-  "mat",   // 6
-  ".",     // 7 — period
+  "The",   // 0
+  "cat",   // 1
+  "sat",   // 2
+  "on",    // 3
+  "the",   // 4
+  "mat",   // 5
 ];
 
-// Hand-authored lower-triangular weight matrix.
-// Rows sum to 1.0 within their visible (non-masked) positions.
-// Weights reflect plausible (not model-computed) attention patterns:
-//   - Verbs look back at their subject
-//   - Articles strongly attend to their noun
-//   - Punctuation distributes broadly across the sentence
+// Causal attention weights computed from QKVProjection's Q/K vectors:
+//   The:  Q=[0.30,-0.10,0.20,0.15]  K=[0.80,0.10,-0.20,0.30]
+//   cat:  Q=[0.90,0.50,0.10,-0.30]  K=[0.20,0.90,0.60,-0.10]
+//   sat:  Q=[0.10,0.80,0.50,0.20]   K=[0.50,0.30,0.80,0.40]
+//   on:   Q=[0.40,0.20,0.70,0.50]   K=[-0.10,0.60,0.30,0.70]
+//   the:  Q=[-0.20,0.30,0.60,0.80]  K=[0.70,0.20,-0.10,0.40]
+//   mat:  Q=[0.60,0.70,0.30,-0.20]  K=[-0.30,0.40,0.50,0.90]
 const WEIGHTS: number[][] = [
-  // <s> can only see itself
-  [1.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
-  // "The" sees <s> and itself; article leans forward toward expected noun
-  [0.20, 0.80, 0.00, 0.00, 0.00, 0.00, 0.00, 0.00],
-  // "cat" — noun attends heavily to its determiner and <s>
-  [0.10, 0.55, 0.35, 0.00, 0.00, 0.00, 0.00, 0.00],
-  // "sat" — verb attends to subject "cat" most
-  [0.05, 0.15, 0.50, 0.30, 0.00, 0.00, 0.00, 0.00],
-  // "on" — preposition attends to verb "sat" and subject "cat"
-  [0.05, 0.10, 0.25, 0.45, 0.15, 0.00, 0.00, 0.00],
-  // "the" — article mostly attends to the preposition and itself
-  [0.05, 0.10, 0.10, 0.20, 0.30, 0.25, 0.00, 0.00],
-  // "mat" — noun attends to its determiner "the" and the verb "sat"
-  [0.05, 0.05, 0.10, 0.25, 0.10, 0.35, 0.10, 0.00],
-  // "." — punctuation distributes broadly; slight recency bias
-  [0.05, 0.05, 0.10, 0.20, 0.10, 0.15, 0.25, 0.10],
+  // "The" — only sees itself
+  [1.00, 0.00, 0.00, 0.00, 0.00, 0.00],
+  // "cat" — attends to "The" (49%) and itself (51%), its determiner
+  [0.49, 0.51, 0.00, 0.00, 0.00, 0.00],
+  // "sat" — attends most to "cat" (46%), its subject
+  [0.19, 0.46, 0.35, 0.00, 0.00, 0.00],
+  // "on" — attends to "sat" (35%), the verb it modifies
+  [0.18, 0.24, 0.35, 0.23, 0.00, 0.00],
+  // "the" — attends to "on" (30%) and "sat" (26%)
+  [0.11, 0.19, 0.26, 0.30, 0.14, 0.00],
+  // "mat" — attends most to "cat" (26%) and "sat" (19%)
+  [0.15, 0.26, 0.19, 0.14, 0.16, 0.10],
 ];
 
 export const attentionData: AttentionData = {

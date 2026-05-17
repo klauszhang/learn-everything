@@ -8,31 +8,27 @@ import {
   TOTAL_WITH_CACHE_FLOPS,
 } from "../data/cache";
 
-// Total decode steps in the demo
 const DECODE_STEPS = STEP_COSTS.length;
 
-// Colors from CSS variables — pulled at runtime for SVG fills
-// We use inline style strings to stay consistent with global.css vars
-const COLOR_CACHE = "#f59e0b"; // --color-cache (amber)
-const COLOR_CACHE_SOFT = "#fef3c7"; // --color-cache-soft
-const COLOR_ACCENT = "#3b82f6"; // --color-accent (blue)
-const COLOR_ACCENT_SOFT = "#dbeafe"; // --color-accent-soft
+const COLOR_CACHE = "#f59e0b";
+const COLOR_CACHE_SOFT = "#fef3c7";
+const COLOR_ACCENT = "#3b82f6";
+const COLOR_ACCENT_SOFT = "#dbeafe";
 const COLOR_BORDER = "#e5e7eb";
 const COLOR_SURFACE = "#f8f9fa";
 const COLOR_MUTED = "#6b7280";
 
-// Grid layout constants
 const CELL_W = 52;
 const CELL_H = 36;
-const LABEL_COL_W = 52; // space for "L0" labels
-const LABEL_ROW_H = 28; // space for token labels
+const LABEL_COL_W = 52;
+const LABEL_ROW_H = 28;
 
 const GRID_W = LABEL_COL_W + TOKENS.length * CELL_W;
 const GRID_H = LABEL_ROW_H + LAYER_COUNT * CELL_H;
 
 function KVGrid({
-  filledUpToToken, // columns 0..filledUpToToken-1 are cached
-  activeToken,     // this column is the "new" active token being computed
+  filledUpToToken,
+  activeToken,
 }: {
   filledUpToToken: number;
   activeToken: number | null;
@@ -42,9 +38,8 @@ function KVGrid({
       width={GRID_W}
       height={GRID_H}
       style={{ display: "block", overflow: "visible" }}
-      aria-label="KV cache grid: rows are transformer layers, columns are tokens. Amber cells are cached K/V pairs; blue cell is the token being decoded now."
+      aria-label="KV cache grid: rows are transformer layers, columns are tokens."
     >
-      {/* Token column labels */}
       {TOKENS.map((tok, col) => (
         <text
           key={col}
@@ -66,10 +61,8 @@ function KVGrid({
         </text>
       ))}
 
-      {/* Layer row labels + cells */}
       {Array.from({ length: LAYER_COUNT }, (_, layer) => (
         <g key={layer}>
-          {/* "L0" … "L3" label */}
           <text
             x={LABEL_COL_W - 6}
             y={LABEL_ROW_H + layer * CELL_H + CELL_H / 2 + 4}
@@ -81,7 +74,6 @@ function KVGrid({
             {`L${layer}`}
           </text>
 
-          {/* One cell per token */}
           {TOKENS.map((_, col) => {
             const isCached = col < filledUpToToken;
             const isActive = col === activeToken;
@@ -162,13 +154,12 @@ function FlopsBar({
   value,
   max,
   color,
-  soft,
 }: {
   label: string;
   value: number;
   max: number;
   color: string;
-  soft: string;
+  soft?: string;
 }) {
   const pct = max > 0 ? (value / max) * 100 : 0;
   return (
@@ -207,18 +198,20 @@ function FlopsBar({
   );
 }
 
+const STEP_DESCRIPTIONS: string[] = [
+  `Prefill complete — prompt tokens "${TOKENS.slice(0, PREFILL_TOKEN_COUNT).join(", ")}" are cached. Now decoding starts.`,
+  ...STEP_COSTS.map((s, i) => {
+    if (i === 0) return `First decode: compute K,V for "${s.token}" and cache it. Read cached K,V for all prompt tokens.`;
+    return `Decode: compute K,V for "${s.token}", cache it. Read ${PREFILL_TOKEN_COUNT + i} cached entries per layer.`;
+  }),
+];
+
 export default function KVCacheGrid() {
-  // decodeStep: 0 = just finished prefill, ready to generate first decode token
   const [decodeStep, setDecodeStep] = useState(0);
 
-  // At decodeStep s:
-  //   - tokens 0..PREFILL_TOKEN_COUNT-1 are always cached (prefill is done)
-  //   - tokens PREFILL_TOKEN_COUNT..PREFILL_TOKEN_COUNT+s-1 are also cached (prior decode steps)
-  //   - token PREFILL_TOKEN_COUNT+s is the active "new" token (if s < DECODE_STEPS)
   const cachedUpTo = PREFILL_TOKEN_COUNT + decodeStep;
   const activeToken = decodeStep < DECODE_STEPS ? PREFILL_TOKEN_COUNT + decodeStep : null;
 
-  // Running FLOPs totals up to and including current step
   const runningNoCacheFlops = STEP_COSTS.slice(0, decodeStep + 1).reduce(
     (acc, s) => acc + s.noCacheFlops,
     0
@@ -233,20 +226,64 @@ export default function KVCacheGrid() {
   const atEnd = decodeStep >= DECODE_STEPS - 1;
   const atStart = decodeStep === 0;
 
-  function stepForward() {
-    setDecodeStep((s) => Math.min(s + 1, DECODE_STEPS - 1));
-  }
-  function stepBack() {
-    setDecodeStep((s) => Math.max(s - 1, 0));
-  }
-  function reset() {
-    setDecodeStep(0);
-  }
-
   const currentCost = decodeStep < DECODE_STEPS ? STEP_COSTS[decodeStep] : null;
 
   return (
     <div style={{ maxWidth: 720, margin: "2rem 0" }}>
+      {/* Top bar: step description + nav */}
+      <div
+        style={{
+          background: COLOR_SURFACE,
+          border: `1px solid ${COLOR_BORDER}`,
+          borderRadius: 8,
+          padding: "0.75rem 1rem",
+          marginBottom: "0.75rem",
+          display: "flex",
+          alignItems: "center",
+          gap: "0.75rem",
+          flexWrap: "wrap",
+        }}
+      >
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.25rem" }}>
+            <span
+              style={{
+                fontSize: "0.68rem",
+                fontWeight: 700,
+                textTransform: "uppercase" as const,
+                letterSpacing: "0.06em",
+                padding: "0.1rem 0.4rem",
+                borderRadius: 4,
+                background: decodeStep === 0 ? COLOR_ACCENT_SOFT : COLOR_CACHE_SOFT,
+                color: decodeStep === 0 ? "#1d4ed8" : "#92400e",
+                border: `1px solid ${decodeStep === 0 ? COLOR_ACCENT : COLOR_CACHE}`,
+              }}
+            >
+              {decodeStep === 0 ? "Prefill done" : `Decode ${decodeStep}`}
+            </span>
+            {currentCost && (
+              <span style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.82rem", color: COLOR_ACCENT, fontWeight: 600 }}>
+                → "{currentCost.token}"
+              </span>
+            )}
+          </div>
+          <div style={{ fontSize: "0.78rem", color: COLOR_MUTED, lineHeight: 1.4 }}>
+            {STEP_DESCRIPTIONS[decodeStep]}
+          </div>
+        </div>
+        <div style={{ display: "flex", gap: "0.5rem", flexShrink: 0 }}>
+          <button onClick={() => setDecodeStep((s) => Math.max(s - 1, 0))} disabled={atStart} style={btnStyle(atStart)}>
+            ←
+          </button>
+          <button onClick={() => setDecodeStep((s) => Math.min(s + 1, DECODE_STEPS - 1))} disabled={atEnd} style={btnStyle(atEnd, true)}>
+            Next step →
+          </button>
+          <button onClick={() => setDecodeStep(0)} style={btnStyle(false)}>
+            Reset
+          </button>
+        </div>
+      </div>
+
       {/* SVG Cache Grid */}
       <div
         style={{
@@ -254,7 +291,7 @@ export default function KVCacheGrid() {
           border: `1px solid ${COLOR_BORDER}`,
           borderRadius: 8,
           padding: "1.25rem",
-          marginBottom: "1.25rem",
+          marginBottom: "1rem",
           overflowX: "auto",
         }}
       >
@@ -281,7 +318,7 @@ export default function KVCacheGrid() {
                 verticalAlign: "middle",
               }}
             />
-            Cached K,V (read from memory)
+            Cached K,V (computed once, read every step)
           </span>
           <span>
             <span
@@ -296,34 +333,11 @@ export default function KVCacheGrid() {
                 verticalAlign: "middle",
               }}
             />
-            New token (compute Q/K/V now)
+            New token (computing K,V now)
           </span>
         </div>
 
         <KVGrid filledUpToToken={cachedUpTo} activeToken={activeToken} />
-
-        <div
-          style={{
-            marginTop: "0.75rem",
-            fontSize: "0.8rem",
-            color: COLOR_MUTED,
-          }}
-        >
-          <strong>Decode step {decodeStep + 1}</strong> of {DECODE_STEPS}
-          {currentCost && (
-            <>
-              {" "}— generating token{" "}
-              <code
-                style={{
-                  fontFamily: "ui-monospace, monospace",
-                  color: COLOR_ACCENT,
-                }}
-              >
-                "{currentCost.token}"
-              </code>
-            </>
-          )}
-        </div>
       </div>
 
       {/* Side-by-side cost comparison */}
@@ -332,10 +346,9 @@ export default function KVCacheGrid() {
           display: "grid",
           gridTemplateColumns: "1fr 1fr",
           gap: "1rem",
-          marginBottom: "1.25rem",
+          marginBottom: "1rem",
         }}
       >
-        {/* No cache panel */}
         <div
           style={{
             border: `1px solid ${COLOR_BORDER}`,
@@ -344,51 +357,20 @@ export default function KVCacheGrid() {
             background: "#fff",
           }}
         >
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "0.85rem",
-              marginBottom: "0.5rem",
-              color: "#374151",
-            }}
-          >
+          <div style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.5rem", color: "#374151" }}>
             Without KV cache
           </div>
-          <div
-            style={{
-              fontSize: "0.8rem",
-              color: COLOR_MUTED,
-              marginBottom: "0.75rem",
-              lineHeight: 1.5,
-            }}
-          >
-            Re-processes <em>all</em> prior tokens through every layer at each step.
-            Cost grows with sequence length.
+          <div style={{ fontSize: "0.8rem", color: COLOR_MUTED, marginBottom: "0.75rem", lineHeight: 1.5 }}>
+            Recomputes K,V for <em>every</em> prior token at each step.
           </div>
           {currentCost && (
-            <div
-              style={{
-                fontFamily: "ui-monospace, monospace",
-                fontSize: "0.85rem",
-                marginBottom: "0.5rem",
-              }}
-            >
-              This step:{" "}
-              <strong style={{ color: "#dc2626" }}>
-                {currentCost.noCacheFlops} units
-              </strong>
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+              This step: <strong style={{ color: "#dc2626" }}>{currentCost.noCacheFlops} units</strong>
             </div>
           )}
-          <FlopsBar
-            label="Total so far"
-            value={runningNoCacheFlops}
-            max={maxFlops}
-            color="#dc2626"
-            soft="#fee2e2"
-          />
+          <FlopsBar label="Total so far" value={runningNoCacheFlops} max={maxFlops} color="#dc2626" />
         </div>
 
-        {/* With cache panel */}
         <div
           style={{
             border: `2px solid ${COLOR_CACHE}`,
@@ -397,52 +379,22 @@ export default function KVCacheGrid() {
             background: COLOR_CACHE_SOFT,
           }}
         >
-          <div
-            style={{
-              fontWeight: 700,
-              fontSize: "0.85rem",
-              marginBottom: "0.5rem",
-              color: "#92400e",
-            }}
-          >
+          <div style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.5rem", color: "#92400e" }}>
             With KV cache
           </div>
-          <div
-            style={{
-              fontSize: "0.8rem",
-              color: "#78350f",
-              marginBottom: "0.75rem",
-              lineHeight: 1.5,
-            }}
-          >
-            Only the new token's Q/K/V are computed. Prior K,V read from cache.
-            Cost stays constant per step.
+          <div style={{ fontSize: "0.8rem", color: "#78350f", marginBottom: "0.75rem", lineHeight: 1.5 }}>
+            Only the new token's K,V computed. Prior entries read from cache.
           </div>
           {currentCost && (
-            <div
-              style={{
-                fontFamily: "ui-monospace, monospace",
-                fontSize: "0.85rem",
-                marginBottom: "0.5rem",
-              }}
-            >
-              This step:{" "}
-              <strong style={{ color: "#92400e" }}>
-                {currentCost.withCacheFlops} units
-              </strong>
+            <div style={{ fontFamily: "ui-monospace, monospace", fontSize: "0.85rem", marginBottom: "0.5rem" }}>
+              This step: <strong style={{ color: "#92400e" }}>{currentCost.withCacheFlops} units</strong>
             </div>
           )}
-          <FlopsBar
-            label="Total so far"
-            value={runningWithCacheFlops}
-            max={maxFlops}
-            color={COLOR_CACHE}
-            soft={COLOR_CACHE_SOFT}
-          />
+          <FlopsBar label="Total so far" value={runningWithCacheFlops} max={maxFlops} color={COLOR_CACHE} />
         </div>
       </div>
 
-      {/* Totals when done */}
+      {/* Summary when done */}
       {atEnd && (
         <div
           style={{
@@ -460,40 +412,20 @@ export default function KVCacheGrid() {
           <strong>
             {(TOTAL_NO_CACHE_FLOPS / TOTAL_WITH_CACHE_FLOPS).toFixed(1)}×
           </strong>{" "}
-          reduction. (Illustrative numbers.)
+          reduction.
         </div>
       )}
 
-      {/* Controls */}
-      <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
-        <button
-          onClick={stepBack}
-          disabled={atStart}
-          style={buttonStyle(atStart)}
-        >
-          ← Back
-        </button>
-        <button
-          onClick={stepForward}
-          disabled={atEnd}
-          style={buttonStyle(atEnd, true)}
-        >
-          Next step →
-        </button>
-        <button onClick={reset} style={buttonStyle(false)}>
-          Reset
-        </button>
-        <span style={{ fontSize: "0.75rem", color: COLOR_MUTED, marginLeft: "auto" }}>
-          Illustrative — not real model output
-        </span>
-      </div>
+      <span style={{ fontSize: "0.75rem", color: COLOR_MUTED }}>
+        Illustrative — not real model output
+      </span>
     </div>
   );
 }
 
-function buttonStyle(disabled: boolean, primary = false): React.CSSProperties {
+function btnStyle(disabled: boolean, primary = false): React.CSSProperties {
   return {
-    padding: "0.45rem 1rem",
+    padding: "0.35rem 0.75rem",
     borderRadius: 6,
     border: primary ? "none" : `1px solid ${COLOR_BORDER}`,
     background: disabled
@@ -503,7 +435,7 @@ function buttonStyle(disabled: boolean, primary = false): React.CSSProperties {
       : "#fff",
     color: disabled ? COLOR_MUTED : primary ? "#fff" : "#374151",
     cursor: disabled ? "not-allowed" : "pointer",
-    fontSize: "0.85rem",
+    fontSize: "0.82rem",
     fontWeight: primary ? 600 : 400,
     opacity: disabled ? 0.5 : 1,
     transition: "background 0.15s",

@@ -1,4 +1,4 @@
-// generation.ts — illustrative data for Ch 5 (05-generation.mdx)
+// generation.ts — illustrative data for Ch 6 (06-generation.mdx)
 // This data is hand-authored for teaching purposes — not real model output.
 
 export interface GenerationStep {
@@ -14,7 +14,7 @@ export interface GenerationStep {
 export const PROMPT_TOKENS: string[] = ["The", " sky", " is"];
 
 /** Tokens generated one at a time during the decode phase */
-export const GENERATED_TOKENS: string[] = [" blue", " and", " full", " of", " bright", " stars"];
+export const GENERATED_TOKENS: string[] = [" blue", " because", " shorter", " wavelengths", " scatter", " more"];
 
 /**
  * Full sequence of generation steps, starting from prefill and walking

@@ -11,20 +11,25 @@ const _takeaway = takeaway ?? frontmatter?.takeaway;
 const _prev = prev ?? frontmatter?.prev;
 const _next = next ?? frontmatter?.next;
 
-// Part I: numbered chapters (0–7)
+// Part I: Transformers (Ch 1–6)
 const partOneChapters = [
-  { number: 0, slug: '/', label: 'Ch 0 — Why caching matters' },
   { number: 1, slug: '/01-tokens', label: 'Ch 1 — Tokens' },
   { number: 2, slug: '/02-embeddings', label: 'Ch 2 — Embeddings' },
   { number: 3, slug: '/03-attention', label: 'Ch 3 — Attention' },
-  { number: 4, slug: '/04-layers', label: 'Ch 4 — Layers' },
-  { number: 5, slug: '/05-generation', label: 'Ch 5 — Generation' },
-  { number: 6, slug: '/06-kv-cache', label: 'Ch 6 — KV Cache' },
-  { number: 7, slug: '/07-prompt-cache', label: 'Ch 7 — Prompt Cache' },
+  { number: 4, slug: '/04-layers', label: 'Ch 4 — The Transformer Block' },
+  { number: 5, slug: '/05-stacking', label: 'Ch 5 — Stacking' },
+  { number: 6, slug: '/06-generation', label: 'Ch 6 — Generation' },
 ];
 
-// Part II: extension chapters (named, not numbered — chapterNumber is null/absent)
+// Part II: The cache (Ch 1–3, numbering restarts per part)
 const partTwoChapters = [
+  { number: 1, slug: '/', label: 'Ch 1 — Why caching matters' },
+  { number: 2, slug: '/06-kv-cache', label: 'Ch 2 — KV Cache' },
+  { number: 3, slug: '/07-prompt-cache', label: 'Ch 3 — Prompt Cache' },
+];
+
+// Part III: extension chapters (named, not numbered — chapterNumber is null/absent)
+const partThreeChapters = [
   { slug: '/vector-search', label: 'Vector search' },
   { slug: '/rag', label: 'RAG' },
   { slug: '/ann-vector-indexes', label: 'ANN & vector indexes' },
@@ -53,28 +58,37 @@ const currentPath = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{_title} — Learn Claude Code</title>
+    <title>{_title} — Learn AI</title>
   </head>
   <body>
     <header class="site-header">
-      <a class="site-title" href="/">Learn Claude Code</a>
+      <a class="site-title" href="/">Learn AI</a>
       <span class="chapter-title">{_title}</span>
     </header>
 
     <div class="page-shell">
       <nav class="sidebar" aria-label="Chapter navigation">
-        <p class="toc-part-label">Part I — Transformers &amp; the cache</p>
+        <p class="toc-part-label">Part I — Transformers</p>
         <ul class="toc-list">
           {partOneChapters.map((ch) => (
-            <li class={`toc-item${ch.number === _chapterNumber ? ' toc-item--active' : ''}`}>
+            <li class={`toc-item${currentPath === ch.slug ? ' toc-item--active' : ''}`}>
               <a href={ch.slug}>{ch.label}</a>
             </li>
           ))}
         </ul>
 
-        <p class="toc-part-label toc-part-label--spaced">Part II — Beyond the cache</p>
+        <p class="toc-part-label toc-part-label--spaced">Part II — The cache</p>
         <ul class="toc-list">
           {partTwoChapters.map((ch) => (
+            <li class={`toc-item${currentPath === ch.slug ? ' toc-item--active' : ''}`}>
+              <a href={ch.slug}>{ch.label}</a>
+            </li>
+          ))}
+        </ul>
+
+        <p class="toc-part-label toc-part-label--spaced">Part III — Beyond the cache</p>
+        <ul class="toc-list">
+          {partThreeChapters.map((ch) => (
             <li class={`toc-item${currentPath === ch.slug ? ' toc-item--active' : ''}`}>
               <a href={ch.slug}>{ch.label}</a>
             </li>
@@ -103,6 +117,17 @@ const currentPath = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
         </footer>
       </main>
     </div>
+
+    <script>
+      {
+        const sidebar = document.querySelector('.sidebar');
+        const active = document.querySelector('.toc-item--active');
+        if (sidebar && active) {
+          const top = active.offsetTop - sidebar.offsetTop - sidebar.clientHeight / 2 + active.clientHeight / 2;
+          sidebar.scrollTop = Math.max(0, top);
+        }
+      }
+    </script>
 
     <script define:vars={{ prevUrl: _prev ?? '', nextUrl: _next ?? '' }}>
       document.addEventListener('keydown', function(e) {
@@ -204,6 +229,9 @@ const currentPath = rawPath === '/' ? '/' : rawPath.replace(/\/$/, '');
     color: var(--color-text);
     text-decoration: none;
     line-height: 1.4;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .toc-item a:hover {

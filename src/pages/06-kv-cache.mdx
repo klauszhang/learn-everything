@@ -1,52 +1,69 @@
 ---
 layout: ../layouts/ChapterLayout.astro
-title: "Ch 6 — KV Cache (internal)"
-chapterNumber: 6
-takeaway: "The KV cache is an intra-request runtime optimization: store K and V for every past token so each decode step only pays for one new token. This is the engine Ch 7's product feature runs on top of."
-prev: "/05-generation"
+title: "Ch 2 — KV Cache"
+chapterNumber: 2
+takeaway: "The KV cache stores K and V tensors from prior tokens so each decode step only computes one new token's K,V. Without it, total generation cost grows as O(n²) because every step recomputes all prior K,V. With it, O(n)."
+prev: "/"
 next: "/07-prompt-cache"
 ---
 
 import KVCacheGrid from '../components/KVCacheGrid.tsx';
+import KVMemoryCalc from '../components/KVMemoryCalc.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-In Ch 5 you saw that autoregressive decoding generates one token at a time, and that without any optimization, each new token forces the model to re-read the *entire* prefix — every prior token, through every layer. For a 500-token prefix, step 501 does 500× the work of step 1. That cost compounds fast.
+## The problem
 
-The **KV cache** is the fix baked into every modern inference runtime. The key observation is that, within a single generation, the K and V tensors for any token at any layer never change once that token has been processed. Layer 2's K and V for the word "The" are computed once, and they stay the same no matter how many tokens follow — because those values depend only on inputs that are already frozen.
+Autoregressive decoding generates one token at a time. Without optimization,
+each new token forces the model to recompute K and V for the entire prefix
+through every layer — O(n²) total work. The KV cache eliminates that by
+storing K and V after their first computation.
 
-## How it works: store once, read forever
+## Step through it
 
-During **prefill** (processing the user's prompt), the model computes Q, K, and V for every prompt token at every layer — exactly the normal forward pass. But instead of discarding K and V after the attention calculation, the runtime saves them to a memory buffer: the KV cache.
-
-During **decode** (generating the response, one token at a time), each new token only needs to compute its own Q, K, and V at each layer. The K and V for all prior tokens are already in the cache. The attention calculation for the new token just reads the cached K and V, computes the dot products, and moves on. No re-computation.
-
-This is an **intra-request** optimization. It lives in runtime memory — GPU VRAM, typically — allocated for the duration of a single generation. When the request ends, the cache is freed. Nothing persists to disk, and nothing is reused across separate API calls.
-
-## Why the cache grows with depth
-
-Every layer has its own K and V tensors. A 4-layer model with a 100-token context holds 4 × 100 = 400 cached K,V pairs. A production-scale model with 96 layers and a 128,000-token context holds far more — memory pressure from the KV cache is a real constraint in serving systems. But the compute saving more than justifies the memory cost: the alternative (recomputing everything at every step) would make long-context generation impractically slow.
-
-## Cache grid: watching cells fill in
-
-The diagram below shows the KV cache state across decode steps. Rows are transformer layers (L0–L3). Columns are tokens in the sequence. **Amber cells** hold cached K,V pairs — paid for once and read on every subsequent step. The **blue cell** is the token currently being decoded: the only one requiring full Q/K/V computation this step.
+Step through decode to see the cache fill. Amber cells are cached K,V pairs
+(computed once, read every step). The blue cell is the only new computation:
 
 <KVCacheGrid client:load />
 
-{/* Inline SVG — static illustration of final filled state for no-JS fallback */}
 <noscript>
   <svg width="480" height="100" aria-label="KV cache grid illustration (static)">
     <text x="0" y="16" font-size="12" fill="#6b7280">Enable JavaScript to see the interactive cache grid demo.</text>
   </svg>
 </noscript>
 
-## What this is *not*
+## How much memory does it take?
 
-The KV cache does not reuse work across different API requests. If you send two separate messages to Claude, the second request starts fresh — the KV tensors from the first are gone. It operates entirely within the memory of one running generation, with no persistence, no cross-request identity, and no awareness of previous conversations.
+The KV cache grows with layers, context length, and model width. Drag the
+sliders to see when it exceeds GPU memory — and toggle GQA to see how
+grouped key-value heads reduce the footprint.
 
-It also does not change *what* the model computes, only *when*. A generation with a KV cache is mathematically equivalent to one without — the cache just eliminates redundant recalculation. (Strict bit-for-bit equality isn't guaranteed because floating-point addition isn't associative and the cached path reduces a different number of terms per step, but the difference is numerical noise, not behavior.)
+<aside class="hint-box">
+<strong>Try it:</strong> Llama 3.1 405B has <strong>126 layers</strong> with <code>d_model = 16384</code> and 405B total parameters.
+Plug those values in and toggle GQA to see why it matters at scale.
+</aside>
+
+<KVMemoryCalc client:load />
+
+<style>{`
+  .hint-box {
+    background: var(--color-accent-soft);
+    border: 1px solid var(--color-accent);
+    border-left-width: 4px;
+    border-radius: var(--radius);
+    padding: var(--space-3) var(--space-4);
+    margin: var(--space-4) 0;
+    font-size: 0.88rem;
+    line-height: 1.5;
+    color: #1e40af;
+    max-width: var(--content-max);
+  }
+`}</style>
 
 <CacheCallout>
-  The KV cache is the **engine** — the intra-request optimization that makes long-context decoding tractable. It stores K and V for every past token in runtime memory, lives for exactly one generation, and is freed when the request ends.
 
-  Ch 7 takes the same core idea — "don't redo work on the prefix" — and turns it into a **product feature** that persists across *separate* API requests. Same intuition, completely different mechanism: different scope (cross-request, not intra-request), different lifetime (one of two discrete tiers — 5 minutes or 1 hour — not the duration of one generation), different invalidation rules, and a different pricing model. Understanding the KV cache makes the prompt cache less mysterious — but don't confuse the two.
+The KV cache is the transformer's key inference optimization. K and V vectors
+for prompt tokens don't change between decode steps — they depend only on
+position and weights. Storing them after prefill eliminates redundant
+computation and turns quadratic decode cost into linear.
+
 </CacheCallout>

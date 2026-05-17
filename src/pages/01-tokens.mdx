@@ -2,113 +2,58 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Ch 1 — Tokens"
 chapterNumber: 1
-takeaway: "Text gets chopped into tokens — word-pieces, not characters. One changed character can shift token boundaries and invalidate the cache."
-prev: "/"
+takeaway: "Text gets chopped into subword tokens via BPE. Each token maps to an integer ID, and that sequence of IDs is the only form of text the model ever sees."
+prev: ""
 next: "/02-embeddings"
 ---
 
+import EncodingCompare from '../components/EncodingCompare.tsx';
+import BPEMergesStepper from '../components/BPEMergesStepper.tsx';
 import TokenChunks from '../components/TokenChunks.tsx';
+import SpecialTokensWrap from '../components/SpecialTokensWrap.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-## Text is not what the model sees
+## Character vs. word vs. subword
 
-When you type a message, the model never reads individual characters. Before
-any computation starts, the text is converted into **tokens** — chunks that
-are larger than a single character but usually smaller than a full word.
+A transformer cannot read text — every string must become a sequence of numbers.
+Pick a preset below (or type your own) to see why character-level and word-level
+encoding both break down, and why subword tokenization wins:
 
-Tokenization uses a technique called **byte-pair encoding (BPE)**, a form of
-subword tokenization. The tokenizer learns which sequences of characters
-appear together most often in training data and merges them into a single
-token. Common words like "the" or "cat" end up as one token each. Rare or
-long words get split into smaller pieces. This lets a fixed vocabulary —
-around 100K tokens for modern frontier models — cover virtually any text,
-including code, URLs, and foreign-language content.
+<EncodingCompare client:load />
 
-## A sentence broken into tokens
+## Byte-pair encoding
 
-Here is a short sentence decomposed into its token boxes. Each colored box
-is one token — the atomic unit the model works with:
+Subword tokenization uses **byte-pair encoding (BPE)**. Starting from individual
+characters, BPE repeatedly merges the most frequent adjacent pair into a new
+token. Step through the algorithm:
 
-<div class="token-diagram">
-  <div class="token-diagram__row">
-    <span class="td-chunk" style="--c-bg:#dbeafe;--c-bd:#93c5fd;--c-tx:#1e40af">The</span>
-    <span class="td-chunk" style="--c-bg:#d1fae5;--c-bd:#6ee7b7;--c-tx:#065f46"> model</span>
-    <span class="td-chunk" style="--c-bg:#ede9fe;--c-bd:#c4b5fd;--c-tx:#4c1d95"> never</span>
-    <span class="td-chunk" style="--c-bg:#fce7f3;--c-bd:#f9a8d4;--c-tx:#831843"> sees</span>
-    <span class="td-chunk" style="--c-bg:#e0f2fe;--c-bd:#7dd3fc;--c-tx:#075985"> individual</span>
-    <span class="td-chunk" style="--c-bg:#dcfce7;--c-bd:#86efac;--c-tx:#14532d"> char</span>
-    <span class="td-chunk" style="--c-bg:#f3e8ff;--c-bd:#d8b4fe;--c-tx:#581c87">acters</span>
-    <span class="td-chunk" style="--c-bg:#fef9c3;--c-bd:#fde047;--c-tx:#713f12">.</span>
-  </div>
-  <div class="token-diagram__label">8 tokens — notice "characters" splits into two pieces: "char" and "acters"</div>
-</div>
+<BPEMergesStepper client:load />
 
-Notice how "characters" splits into two sub-word pieces. That is the
-tokenizer deciding that "char" and "acters" are useful units on their own
-(they appear in many other words), so it doesn't give "characters" its own
-dedicated token.
+The result is a vocabulary of 100,000–200,000 entries. Common words stay whole;
+rare words fall back to shorter pieces or raw bytes. The tokenizer is trained
+separately from the model and frozen before model training begins.
 
-## How casing, punctuation, and word length affect chunks
+## Token boundaries shift
 
-The number and shape of tokens changes depending on what text you feed in.
-Switch between the examples below to see how:
+The tokenizer is sensitive to casing, spacing, and punctuation. A single
+character change can shift every boundary from that point onward. Toggle
+"Show IDs" to see the integer each token maps to:
 
 <TokenChunks client:load />
 
-Key observations:
-- **Common words** (simple sentence) each get their own token.
-- **Punctuation** is almost always a separate token — "It's" becomes `It` + `'s`.
-- **Uppercase** matters: `Hello` and `hello` are different tokens with different IDs.
-- **Long or rare words** are split into multiple sub-word pieces. "Untokenizable" doesn't exist as one token, so the tokenizer falls back to pieces it knows.
+## From text to model input
+
+The model never sees your text — only a sequence of integer IDs wrapped in
+structural markers. Type below to see how raw text becomes a token sequence:
+
+<SpecialTokensWrap client:load />
 
 <CacheCallout>
 
-Cache hits are checked **token by token**. The system compares the incoming
-request's token sequence against the cached prefix — and the comparison is
-exact. If a single character changes anywhere in the cached prefix, the
-tokenizer may produce a different chunk boundary at that point or after it,
-shifting all subsequent token IDs. The result: the token sequence no longer
-matches, the cache entry is invalid, and the full prefix must be reprocessed
-from scratch.
-
-This is why small edits to early content (a typo fix in the system prompt,
-a one-word tweak to a tool description) can silently blow the cache cold even
-when the visible text looks almost the same.
+Tokenization is the transformer's **input interface**. Every downstream
+operation — embedding lookup, attention, generation — operates on the token
+sequence produced here. The vocabulary size sets the embedding table's row
+count, and the sequence length determines how much work attention must do.
+Nothing about the original text survives past this stage except the integer IDs.
 
 </CacheCallout>
-
-<style>{`
-  .token-diagram {
-    margin: 1.5rem 0;
-    padding: 1.25rem 1.5rem;
-    background: var(--color-surface);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius);
-    max-width: var(--content-max);
-  }
-
-  .token-diagram__row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-    margin-bottom: 0.75rem;
-  }
-
-  .td-chunk {
-    display: inline-block;
-    padding: 0.3rem 0.55rem;
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    background: var(--c-bg);
-    border: 1px solid var(--c-bd);
-    color: var(--c-tx);
-    white-space: pre;
-  }
-
-  .token-diagram__label {
-    font-size: 0.8rem;
-    color: var(--color-muted);
-    font-style: italic;
-  }
-`}</style>

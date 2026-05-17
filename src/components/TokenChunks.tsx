@@ -14,15 +14,31 @@ const TOKEN_COLORS = [
   { bg: "#f3e8ff", border: "#d8b4fe", text: "#581c87" }, // purple
 ];
 
+const SPECIAL_TOKEN_COLOR = { bg: "#f3f4f6", border: "#9ca3af", text: "#4b5563" };
+
+function isSpecialToken(chunk: string): boolean {
+  return chunk.startsWith("<") && chunk.endsWith(">");
+}
+
 export default function TokenChunks() {
   const [activeId, setActiveId] = useState(TOKEN_EXAMPLES[0].id);
+  const [showIds, setShowIds] = useState(false);
   const example = TOKEN_EXAMPLES.find((e) => e.id === activeId)!;
+
+  const idsPreview = showIds
+    ? (() => {
+        const preview = example.ids.slice(0, 5);
+        const suffix = example.ids.length > 5 ? ", ..." : "";
+        return ` → [${preview.join(", ")}${suffix}]`;
+      })()
+    : "";
 
   return (
     <div style={{ maxWidth: "var(--content-max, 720px)" }}>
       <style>{`
         .tc-tabs {
           display: flex;
+          align-items: center;
           gap: 0.5rem;
           flex-wrap: wrap;
           margin-bottom: 1rem;
@@ -60,13 +76,24 @@ export default function TokenChunks() {
           margin-bottom: 0.75rem;
         }
         .tc-chunk {
-          display: inline-block;
+          display: inline-flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.15rem;
           padding: 0.3rem 0.55rem;
           border-radius: 4px;
           font-family: var(--font-mono, monospace);
           font-size: 0.9rem;
           border: 1px solid;
           white-space: pre;
+        }
+        .tc-chunk-text {
+          /* inherits font from parent */
+        }
+        .tc-chunk-id {
+          font-size: 0.65rem;
+          opacity: 0.7;
+          font-family: var(--font-mono, monospace);
         }
         .tc-count {
           font-size: 0.8rem;
@@ -90,13 +117,23 @@ export default function TokenChunks() {
             {ex.label}
           </button>
         ))}
+        <button
+          className={`tc-tab${showIds ? " tc-tab--active" : ""}`}
+          onClick={() => setShowIds(!showIds)}
+          style={{ marginLeft: "auto" }}
+        >
+          {showIds ? "Hide IDs" : "Show IDs"}
+        </button>
       </div>
 
       <p className="tc-description">{example.description}</p>
 
       <div className="tc-chunks">
         {example.chunks.map((chunk, i) => {
-          const color = TOKEN_COLORS[i % TOKEN_COLORS.length];
+          const special = isSpecialToken(chunk);
+          const color = special
+            ? SPECIAL_TOKEN_COLOR
+            : TOKEN_COLORS[i % TOKEN_COLORS.length];
           return (
             <span
               key={i}
@@ -105,9 +142,13 @@ export default function TokenChunks() {
                 background: color.bg,
                 borderColor: color.border,
                 color: color.text,
+                borderStyle: special ? "dashed" : "solid",
               }}
             >
-              {chunk}
+              <span className="tc-chunk-text">{chunk}</span>
+              {showIds && (
+                <span className="tc-chunk-id">{example.ids[i]}</span>
+              )}
             </span>
           );
         })}
@@ -115,6 +156,7 @@ export default function TokenChunks() {
 
       <div className="tc-count">
         {example.chunks.length} token{example.chunks.length !== 1 ? "s" : ""}
+        {idsPreview}
       </div>
 
       <p className="tc-note">

@@ -127,10 +127,9 @@ export default function AutoregressiveStep() {
           color: #166534;
         }
 
-        /* New token: uses --color-accent per constraint (amber reserved for cache) */
         .ar-token--new {
-          background: var(--color-accent);
-          border-color: var(--color-accent);
+          background: #16a34a;
+          border-color: #16a34a;
           color: #fff;
           animation: pop-in 0.2s ease-out;
         }

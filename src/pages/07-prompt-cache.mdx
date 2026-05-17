@@ -1,226 +1,185 @@
 ---
 layout: ../layouts/ChapterLayout.astro
-title: "Ch 7 — Claude Code prompt cache"
-chapterNumber: 7
-takeaway: "The prompt cache keeps expensive prefix work alive across requests — stable content early and mutable content late is the only rule you need."
+title: "Ch 3 — Prompt Cache"
+chapterNumber: 3
+takeaway: "The prompt cache saves the K,V vectors from prefill across API requests. If the next request starts with the same token prefix, it skips recomputing them. One changed token breaks the match."
 prev: "/06-kv-cache"
 next: "/vector-search"
 ---
 
+import CacheCompare from '../components/CacheCompare.tsx';
+import PrefixMatchDemo from '../components/PrefixMatchDemo.tsx';
 import RequestAnatomy from '../components/RequestAnatomy.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-## From runtime to persistence
+## KV cache vs. prompt cache
 
-In Chapter 6 you saw how the **KV cache** eliminates redundant work inside a single generation: once a token has been processed at a given layer, its key and value vectors are stored and reused for every subsequent decode step — no recomputation needed. That optimization lives entirely in **runtime memory** during one API call. When the call ends, those saved vectors are gone.
+<CacheCompare client:load />
 
-The **prompt cache** is a different beast. It is a *product feature* — not an internal kernel optimization — that persists prefix state **across separate API requests**. When the same prefix appears in the next request, the model skips all the transformer layers for those tokens entirely. Same underlying idea ("don't redo work on the prefix"), but different mechanism, different scope, different lifetime, and — crucially — different invalidation rules. This chapter is about the product feature, not the runtime kernel.
+## How it works
 
----
-
-## Cache breakpoints
-
-Caching doesn't happen automatically for every token. Developers (or Claude Code itself) mark **cache breakpoints**: explicit signals saying "try to write a cache entry up to this point in the request." The API currently supports **up to 4 breakpoints per request**.
-
-On each request, the server looks for the longest matching cached prefix — the furthest breakpoint where the token sequence exactly matches a stored entry. Everything up to that point is served from cache; everything after is processed fresh. For each breakpoint the server checks a short **lookback window** of around 20 recent positions to find a match; if nothing matches there, it falls back to the next earlier breakpoint in the same request. So a partial hit is possible when only the tail of the prefix has changed.
-
-**You do not manage breakpoints when using Claude Code.** Claude Code handles all of this internally — it places breakpoints at the right positions automatically. (The API itself only writes cache entries at positions marked with `cache_control`; there is no implicit caching of long prefixes without one. Anthropic does offer an "automatic caching" convenience mode that places a single breakpoint on the last cacheable block for you, but that is a placement helper, not invisible background caching.) Understanding where those breakpoints go is exactly what tells you what will and won't be cached.
-
----
-
-## What counts as a hit
-
-A cache hit is an **exact token-level prefix match** up to a breakpoint. Not approximately the same. Not semantically equivalent. Byte-for-byte identical tokens in exactly the same order.
-
-This matters more than it sounds:
-
-- A one-character typo fix regenerates different tokens and misses.
-- Reordering two tool definitions breaks the match even if both are still present.
-- Adding a line to the system prompt shifts every downstream token by one and invalidates everything.
-
----
-
-## TTL and the two tiers
-
-Cached entries expire. The default TTL is **5 minutes**. An extended **1-hour TTL** is also available.
-
-**Both tiers charge a premium to *write* a cache entry** — writes always cost more per token than plain uncached input. The 1-hour tier carries a noticeably higher write premium than the 5-minute tier, in exchange for the longer lifetime. So the 1-hour tier is not just "5-minute but better": you pay extra up front for entries you intend to read back later. The longer lifetime only becomes a net win when that entry will be read many times before it expires — if your turns are spaced far apart and the prefix is stable, the 1-hour tier pays off. If you pay the write premium and then the prefix changes before the next read, you've paid for nothing.
-
----
-
-## Pricing direction
-
-Prompt cache pricing follows a simple shape — qualitatively:
-
-- **Cache writes** cost *more* per token than plain uncached input — for *both* tiers. The 1-hour tier costs noticeably more to write than the 5-minute tier.
-- **Cache reads** cost *much less* per token than uncached input.
-
-The math works because you pay the write premium once and then amortize it over every subsequent cache read. A prefix read many times relative to writes is a clear net win. A prefix read once or twice barely breaks even — and on the 1-hour tier with the higher write premium, it can be a net loss.
-
-Never treat caching as "free." The write always costs something, and avoiding that cost is why **keeping prefixes stable** is the real optimization.
-
----
-
-## Anatomy of a Claude Code request
-
-Every Claude Code request is assembled from a predictable stack of segments. Claude Code places cache breakpoints after the segments that are most stable:
+Same prefix = cache hit. One changed token = recompute from that point.
+Stable content goes first, with **breakpoints** after each stable segment:
 
 <style>{`
-  .anatomy-diagram {
-    display: flex;
-    align-items: flex-end;
-    gap: 4px;
-    margin: 24px 0 8px;
+  .anat-root {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-4) var(--space-3);
+    background: var(--color-surface);
+    max-width: var(--content-max);
+    margin: var(--space-6) 0;
     overflow-x: auto;
-    padding-bottom: 4px;
   }
-  .anatomy-seg {
+  .anat-stack {
+    display: flex;
+    align-items: stretch;
+    height: 56px;
+    margin-bottom: var(--space-3);
+  }
+  .anat-seg {
     display: flex;
     flex-direction: column;
     align-items: center;
-    border-radius: 6px;
-    padding: 10px 6px 8px;
+    justify-content: center;
+    padding: 0 0.4rem;
     font-size: 0.72rem;
     font-weight: 600;
-    text-align: center;
-    position: relative;
-    line-height: 1.3;
     color: #374151;
-    border: 2px solid transparent;
-    min-width: 72px;
+    text-align: center;
+    line-height: 1.3;
+    border: 1.5px solid;
+    min-width: 0;
   }
-  .anatomy-seg .seg-tokens {
-    display: block;
-    font-size: 0.64rem;
+  .anat-seg:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+  .anat-seg:last-child { border-radius: 0 var(--radius) var(--radius) 0; }
+  .anat-tokens {
+    font-size: 0.6rem;
     font-weight: 400;
-    color: #6b7280;
-    margin-top: 4px;
-    font-family: ui-monospace, monospace;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+    margin-top: 2px;
   }
-  .anatomy-seg .bp-marker {
-    position: absolute;
-    right: -3px;
-    top: -4px;
-    bottom: -4px;
+  .anat-bp {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    flex-shrink: 0;
+  }
+  .anat-bp-line {
     width: 3px;
+    height: 100%;
     background: #6366f1;
     border-radius: 2px;
-    z-index: 1;
   }
-  .anatomy-seg .bp-label {
-    position: absolute;
-    right: -22px;
-    top: -20px;
-    font-size: 0.6rem;
+  .anat-bp-label {
+    font-size: 0.58rem;
     font-weight: 700;
     color: #6366f1;
+    margin-top: 4px;
     white-space: nowrap;
-    background: #fff;
-    padding: 0 2px;
   }
-  .anatomy-legend {
+  .anat-labels {
     display: flex;
-    gap: 14px;
-    flex-wrap: wrap;
-    font-size: 0.74rem;
-    color: #6b7280;
-    margin-top: 8px;
-    margin-bottom: 20px;
+    align-items: flex-start;
+    margin-top: 2px;
   }
-  .anatomy-legend span {
+  .anat-labels .anat-bp-slot {
+    width: 28px;
+    flex-shrink: 0;
+    text-align: center;
+  }
+  .anat-legend {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: var(--color-muted);
+    margin-top: var(--space-3);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--color-border);
+  }
+  .anat-legend-item {
     display: flex;
     align-items: center;
     gap: 5px;
   }
-  .anatomy-legend .swatch {
-    display: inline-block;
+  .anat-swatch {
     width: 12px;
     height: 12px;
     border-radius: 3px;
-    border: 1.5px solid #94a3b8;
+    flex-shrink: 0;
   }
-  .anatomy-legend .bp-swatch {
-    display: inline-block;
+  .anat-bp-swatch {
     width: 3px;
     height: 14px;
     background: #6366f1;
     border-radius: 2px;
+    flex-shrink: 0;
   }
 `}</style>
 
-<div class="anatomy-diagram" role="img" aria-label="Anatomy of a Claude Code request showing five segments: system prompt, tools, files, history, and new user message. Cache breakpoints follow the first three segments.">
-  <div class="anatomy-seg" style="background:#e0e7ff;border-color:#818cf8;height:90px;">
-    System&nbsp;prompt
-    <span class="seg-tokens">~800 tkns</span>
-    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
+<div class="anat-root" role="img" aria-label="Claude Code request: 4 segments with 2 cache breakpoints">
+  <div class="anat-stack">
+    <div class="anat-seg" style="flex:1.2;background:#ede9fe;border-color:#a78bfa;">
+      Tool defs
+      <span class="anat-tokens">~1,200</span>
+    </div>
+    <div class="anat-bp"><div class="anat-bp-line"></div></div>
+    <div class="anat-seg" style="flex:1;background:#e0e7ff;border-color:#818cf8;">
+      System prompt
+      <span class="anat-tokens">~800</span>
+    </div>
+    <div class="anat-bp"><div class="anat-bp-line"></div></div>
+    <div class="anat-seg" style="flex:1.5;background:#f1f5f9;border-color:#94a3b8;">
+      History
+      <span class="anat-tokens">grows each turn</span>
+    </div>
+    <div class="anat-seg" style="flex:0.5;background:#f8fafc;border-color:#cbd5e1;">
+      New message
+      <span class="anat-tokens">~120</span>
+    </div>
   </div>
-  <div class="anatomy-seg" style="background:#ede9fe;border-color:#a78bfa;height:100px;">
-    Tool&nbsp;defs
-    <span class="seg-tokens">~1,200 tkns</span>
-    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
+  <div class="anat-labels">
+    <div style="flex:1.2"></div>
+    <div class="anat-bp-slot"><span class="anat-bp-label">BP 1</span></div>
+    <div style="flex:1"></div>
+    <div class="anat-bp-slot"><span class="anat-bp-label">BP 2</span></div>
+    <div style="flex:1.5"></div>
+    <div style="flex:0.5"></div>
   </div>
-  <div class="anatomy-seg" style="background:#dcfce7;border-color:#4ade80;height:120px;min-width:90px;">
-    Read&nbsp;files
-    <span class="seg-tokens">~3,500 tkns</span>
-    <div class="bp-marker"><div class="bp-label">▼ BP</div></div>
-  </div>
-  <div class="anatomy-seg" style="background:#f1f5f9;border-color:#94a3b8;height:72px;">
-    History
-    <span class="seg-tokens">~600 tkns</span>
-  </div>
-  <div class="anatomy-seg" style="background:#f8fafc;border-color:#cbd5e1;height:60px;">
-    New&nbsp;turn
-    <span class="seg-tokens">~120 tkns</span>
+  <div class="anat-legend">
+    <span class="anat-legend-item"><span class="anat-swatch" style="background:#ede9fe;border:1.5px solid #a78bfa"></span> Stable (same every request)</span>
+    <span class="anat-legend-item"><span class="anat-swatch" style="background:#f1f5f9;border:1.5px solid #94a3b8"></span> Changes each turn</span>
+    <span class="anat-legend-item"><span class="anat-bp-swatch"></span> Cache breakpoint</span>
   </div>
 </div>
 
-<div class="anatomy-legend">
-  <span><span class="swatch" style="background:#e0e7ff;border-color:#818cf8;"></span> Typically cached</span>
-  <span><span class="swatch" style="background:#f1f5f9;border-color:#94a3b8;"></span> Reprocessed each turn</span>
-  <span><span class="bp-swatch"></span> Cache breakpoint (▼ BP)</span>
-</div>
-
-Segment heights and the exact breakpoint placement shown here are **illustrative** — Claude Code manages its own breakpoints internally and Anthropic does not publicly document the exact segment layout. The shape to remember: breakpoints sit after the most stable segments (system prompt, tool definitions, read files), while history and the new turn have no breakpoints and are reprocessed fresh.
-
----
-
-## Interactive demo: two requests, side by side
-
-Try the scenarios below. Hover any segment block to see why it hits or misses. Then flip to a scenario where a tool definition or system prompt changes — and watch the entire cache go cold downstream.
+Click a scenario to see what breaks:
 
 <RequestAnatomy client:load />
 
----
+Step through four turns to watch prefix matching in action:
 
-## Silent cache invalidators
+<PrefixMatchDemo client:load />
 
-This is the part that trips people up. These changes blow the cache cold **without any visible change to the conversation**:
+## What breaks the cache
 
-1. **System prompt edits.** Any modification — even a single added space — shifts every token downstream from the very first breakpoint.
-2. **Tool definition changes.** Adding, removing, or rewording any tool description changes the token sequence for the tools segment. Everything after tools goes cold.
-3. **Segment order changes.** The cache is positional. If two segments are swapped, no existing entry matches.
+These silently invalidate — no error, no warning:
 
-The danger is subtle: you might refactor a tool description for clarity, run Claude Code again, and wonder why the session "feels slower." The cache was silently invalidated. No error, no warning — just a miss.
+- **Edit CLAUDE.md** — injected into the system prompt; even one space breaks it
+- **Change hooks or permissions** — both are embedded in the system prompt
+- **Add MCP server or /skill** — changes tool definitions, which are first in the token stream
+- **/reload-plugins** — rebuilds the tool list from scratch
+- **Switch model** — cache is model-scoped; different model = cold start
 
----
-
-## Practical takeaways
-
-**1. Put stable content first, mutable content last.**  
-System prompts, tool definitions, and large reference files belong at the top of the context stack. Your latest question and fresh tool outputs belong at the bottom. Claude Code already follows this order internally.
-
-**2. Avoid small edits to early segments.**  
-A one-line change to the system prompt or a minor tool description tweak invalidates the entire prefix. Batch those changes or save them for the start of a new session.
-
-**3. Tool and system-prompt churn silently nukes the cache.**  
-The cache gives no feedback when it's cold. If you're iterating rapidly on tool definitions during development, expect full reprocessing costs on every turn.
-
-**4. The 5-minute TTL means back-to-back turns benefit most.**  
-Quick exchanges in an active session are the ideal use case. Long gaps between turns risk TTL expiry. If you're using the 1-hour tier, weigh the higher write cost against your actual read frequency.
-
-**5. Longer TTL does not mean free.**  
-Both tiers charge a write premium above uncached input; the 1-hour tier charges noticeably more than the 5-minute one. Don't opt in to 1-hour unless your session spans more than a few minutes and the prefix is genuinely stable.
+Safe actions that **don't** break the cache: normal turns, subagent calls, reading/editing files. /compact keeps tools and system prompt cached but rewrites history, so prior turns are reprocessed.
 
 <CacheCallout>
-The prompt cache is the payoff for everything you've learned. The KV cache (Ch 6) saves work inside one generation; the prompt cache saves work across separate requests. Claude Code structures every request so the stable parts — system prompt, tool definitions, read files — come first with breakpoints, and only your new message and the latest tool outputs are ever reprocessed. Keeping your system prompt and tool definitions stable, and loading large reference files early, is all it takes to let the cache do its job. A single silent invalidator — an edited tool description, a reworded system prompt — breaks the match and forces a full reprocess. No warning, just cost.
+The KV cache saves work within one request. The prompt cache saves the same
+K,V vectors across requests — so the next call with the same prefix skips
+prefill. Keep stable content at the top, don't touch it mid-session, and
+the cache stays warm.
 </CacheCallout>

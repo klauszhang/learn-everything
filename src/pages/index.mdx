@@ -1,27 +1,26 @@
 ---
 layout: ../layouts/ChapterLayout.astro
-title: "Ch 0 — Why caching matters"
-chapterNumber: 0
-takeaway: "Every Claude Code turn re-reads the entire conversation. Prompt caching skips that re-read — but you need to understand transformers to know what's actually being skipped."
-prev: ""
-next: "/01-tokens"
+title: "Ch 1 — Why caching matters"
+chapterNumber: 1
+takeaway: "Every Claude Code turn re-reads the entire conversation. Prompt caching skips that re-read — but only when the prefix matches exactly, token for token."
+prev: "/06-generation"
+next: "/06-kv-cache"
 ---
 
+import CacheInvalidationDemo from '../components/CacheInvalidationDemo.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
 ## Every turn re-reads everything
 
-When you send a message to Claude Code, the model doesn't pick up where it left off. It reads the whole thing from scratch: the system prompt, every tool definition, every file that's been loaded, and every message in the conversation so far — then your new message on top.
-
-That's not a bug. It's how transformers work. The model has no persistent memory between requests; its only input is the full text you hand it.
-
-Here's what that looks like across a short session:
+The model has no memory between requests. Each turn sends the full conversation
+from scratch — system prompt, tools, files, history, then your new message.
+Hover a turn to see the repeated prefix:
 
 <div class="timeline-demo">
   <div class="turn turn--1">
     <div class="turn-label">Turn 1</div>
     <div class="turn-segments">
-      <span class="seg seg--system">System prompt + tools</span>
+      <span class="seg seg--system">Tools + system prompt</span>
       <span class="seg seg--user">User message 1</span>
       <span class="seg seg--assistant">Assistant reply 1</span>
     </div>
@@ -29,7 +28,7 @@ Here's what that looks like across a short session:
   <div class="turn turn--2">
     <div class="turn-label">Turn 2</div>
     <div class="turn-segments">
-      <span class="seg seg--prefix seg--system">System prompt + tools</span>
+      <span class="seg seg--prefix seg--system">Tools + system prompt</span>
       <span class="seg seg--prefix seg--history">User message 1 · Assistant reply 1</span>
       <span class="seg seg--user">User message 2</span>
       <span class="seg seg--assistant">Assistant reply 2</span>
@@ -38,7 +37,7 @@ Here's what that looks like across a short session:
   <div class="turn turn--3">
     <div class="turn-label">Turn 3</div>
     <div class="turn-segments">
-      <span class="seg seg--prefix seg--system">System prompt + tools</span>
+      <span class="seg seg--prefix seg--system">Tools + system prompt</span>
       <span class="seg seg--prefix seg--history">User message 1 · Assistant reply 1 · User message 2 · Assistant reply 2</span>
       <span class="seg seg--user">User message 3</span>
       <span class="seg seg--assistant">Assistant reply 3</span>
@@ -46,47 +45,18 @@ Here's what that looks like across a short session:
   </div>
 </div>
 
-<p class="timeline-hint">Hover over a turn to highlight the repeated prefix.</p>
+## What breaks the cache
 
-The shaded segments are identical across turns. That's a lot of work being re-done on every request.
+The cache requires an exact token-by-token prefix match. Click each scenario
+to see which segments go cold:
 
-## Prompt caching is the workaround
-
-Claude Code uses a feature called **prompt caching**. Claude Code itself (not you) automatically marks "cache breakpoints" at stable points in the request. When the next request arrives with the same prefix up to one of those breakpoints, the model skips re-processing that prefix and reuses the computation from the first time through.
-
-The result: the system prompt, tool definitions, and any files that haven't changed are processed once and reused on every subsequent turn. Only your new message and the latest outputs actually get processed from scratch.
-
-This can cut inference cost dramatically — and speed things up for long conversations. But whether a given turn gets a cache hit depends on whether the prefix matches exactly, token by token.
-
-## What you need to understand transformers to know
-
-That "exact token-by-token match" rule isn't arbitrary. It follows directly from how transformers process text.
-
-### Part I — Transformers & the cache
-
-Seven chapters that build the mental model from tokens up to the prompt cache:
-
-- **Ch 1 — Tokens:** Text gets chopped into tokens. One changed character can shift token boundaries and invalidate the cache.
-- **Ch 2 — Embeddings:** Each token maps to a fixed vector. Same token in, same vector out — at the input layer.
-- **Ch 3 — Attention:** Tokens "look at" each other. The computation for token N depends on tokens 1…N−1.
-- **Ch 4 — Layers:** Many stacked attention + FFN blocks. Each layer builds on the last.
-- **Ch 5 — Generation:** The model produces one token at a time, appending each to the input for the next step.
-- **Ch 6 — KV cache:** The internal optimization that avoids re-processing the prefix on every generation step.
-- **Ch 7 — Prompt cache:** The product feature built on the same idea — but across separate API requests, with its own TTL, pricing, and invalidation rules.
-
-By the end of Part I you'll know exactly what bytes are reused, what makes a cache hit, and what silently blows it cold.
-
-### Part II — Beyond the cache
-
-The same audience, the same house style, but pushing into the rest of the stack you actually touch when using Claude. Each chapter ends with a takeaway that loops back to what you learned in Part I.
-
-- **Vector search:** retrieval embeddings (different object from Ch 2's input-layer embeddings), cosine geometry, what semantic search actually does — and where it quietly fails.
-- **RAG:** the retrieval-augmented loop. Why every "the model can answer questions about my docs" demo is the same five-step pipeline. Where it interacts with the prompt cache from Ch 7.
-
-More chapters in this part land as their research dossiers (under `docs/research/`) become chapters: sampling, tool use, extended thinking, long-context behavior, streaming + structured outputs, agents and agent loops, MCP, hallucination and calibration, pattern matching, data search, indexing strategies, and search engines (Elasticsearch and friends).
+<CacheInvalidationDemo client:load />
 
 <CacheCallout>
-Prompt caching is the reason this site exists. Every Part I chapter connects back to one question: why does a prefix need to be <em>exactly</em> identical, token for token, for the cache to hit? The answer lives in how transformers work. Part II then shows how the rest of the stack — retrieval, tools, agents, sampling — either lives inside that cached prefix or sits next to it. Start here, and the cache behavior in Ch 7 will feel inevitable rather than arbitrary.
+The KV cache saves work within one request. The prompt cache extends the same
+idea across requests — if the prefix matches, the model skips recomputing it.
+Keep stable content at the top, don't touch it mid-session, and the cache
+stays warm.
 </CacheCallout>
 
 <style>{`
@@ -152,7 +122,6 @@ Prompt caching is the reason this site exists. Every Part I chapter connects bac
     color: #166534;
   }
 
-  /* Prefix segments: highlighted on hover of their parent turn */
   .seg--prefix {
     opacity: 0.55;
     transition: opacity 0.15s, box-shadow 0.15s;
@@ -161,13 +130,5 @@ Prompt caching is the reason this site exists. Every Part I chapter connects bac
   .turn:hover .seg--prefix {
     opacity: 1;
     box-shadow: 0 0 0 2px var(--color-cache);
-  }
-
-  .timeline-hint {
-    font-size: 0.8rem;
-    color: var(--color-muted);
-    font-style: italic;
-    margin-top: 0.25rem;
-    margin-bottom: 1.5rem;
   }
 `}</style>

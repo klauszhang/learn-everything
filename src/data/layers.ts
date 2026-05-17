@@ -1,41 +1,38 @@
-// layers.ts — illustrative per-layer hover annotations for Ch 4 (04-layers.mdx).
-// This data is hand-authored for pedagogical purposes and does NOT represent
-// real model internals. Layer specialization is an active research area and
-// the findings are not as tidy as popular descriptions suggest.
-//
-// CRITICAL: Avoid the contested "low=syntax / mid=semantic / high=task" taxonomy.
-// All notes are hedged — framing what "some studies" or "layers like this" tend
-// to show, not confident per-layer role claims.
-
 export interface LayerAnnotation {
-  layer: number;   // 1-indexed display label
-  note: string;    // one-sentence hedged annotation
+  layer: number;
+  zone: "early" | "middle" | "late";
+  note: string;
 }
 
-// Six illustrative layers. In a real large model there are many more (e.g. 32–96).
 export const LAYER_ANNOTATIONS: LayerAnnotation[] = [
   {
     layer: 1,
-    note: "Early layers tend to produce representations that are strongly influenced by individual token identity — though even here, context already matters.",
+    zone: "early",
+    note: "Tends to encode token identity and local n-gram patterns — the model is still close to raw embeddings. \"bank\" in \"river bank\" and \"savings bank\" look nearly identical here.",
   },
   {
     layer: 2,
-    note: "Some studies find that relatively shallow layers are sensitive to surface-level patterns like punctuation and common word endings, but findings vary across model families.",
+    zone: "early",
+    note: "Surface-level syntax starts to emerge — punctuation roles, word boundaries, basic part-of-speech signals. Attention heads often focus on immediate neighbors.",
   },
   {
     layer: 3,
-    note: "Mid-range layers often show richer contextual blending — tokens start to 'know about' their neighbors — though what exactly is encoded is still an open research question.",
+    zone: "middle",
+    note: "Contextual blending deepens. Probing studies find this is where representations of \"bank\" in different contexts start to diverge. Some factual recall circuits begin here.",
   },
   {
     layer: 4,
-    note: "Research on probing classifiers suggests some mid-to-upper layers carry information useful for tasks like part-of-speech, but results depend heavily on the model and the probe design.",
+    zone: "middle",
+    note: "Mid-range layers often carry the richest semantic content. Circuits for tasks like indirect object identification and coreference resolution have been traced to layers in this range.",
   },
   {
     layer: 5,
-    note: "Layers like this often show activation patterns that differ across semantic categories in some studies, but the mapping is noisy and not reliably reproducible across architectures.",
+    zone: "late",
+    note: "The model is now shaping its representation toward a decision: which token comes next? Less about understanding context, more about narrowing down the answer.",
   },
   {
     layer: 6,
-    note: "Final layers tend to produce representations most useful for predicting the next token — but the 'higher = more task-specific' story is an oversimplification, not a clean rule.",
+    zone: "late",
+    note: "The last layer's output is a d_model vector. A linear projection maps it to vocabulary-size scores (logits) — one number per possible next token. Softmax turns those into probabilities. Ch 6 walks through this step by step.",
   },
 ];

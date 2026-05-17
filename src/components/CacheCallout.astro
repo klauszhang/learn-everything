@@ -8,12 +8,10 @@
 //   <CacheCallout>…slot content…</CacheCallout>
 //   <CacheCallout label="Custom label">…slot content…</CacheCallout>
 //
-// The default label preserves Part I's "How this connects to the cache"
-// wording so existing chapters keep their original presentation. Part II
-// (extension) chapters pass an explicit override, e.g.
-// label="Chapter takeaway", since they don't all have a cache angle.
+// Part I uses "How this connects to the transformer"; Part II chapters
+// pass an explicit override when the transformer angle doesn't fit.
 
-const { label = 'How this connects to the cache' } = Astro.props;
+const { label = 'How this connects to the transformer' } = Astro.props;
 ---
 
 <aside class="cache-callout">

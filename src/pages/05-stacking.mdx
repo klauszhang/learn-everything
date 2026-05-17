@@ -1,0 +1,42 @@
+---
+layout: ../layouts/ChapterLayout.astro
+title: "Ch 5 — Stacking Layers"
+chapterNumber: 5
+takeaway: "Stacking 32–96 identical blocks is where model scale comes from. Each block has its own weights; early layers capture surface patterns, later layers capture abstract semantics."
+prev: "/04-layers"
+next: "/06-generation"
+---
+
+import LayerStack from '../components/LayerStack.tsx';
+import DepthWidth from '../components/DepthWidth.tsx';
+import CacheCallout from '../components/CacheCallout.astro';
+
+## From one block to a full model
+
+Stack 32–96 copies of the block from Ch 4 and you have a full transformer.
+Same structure every time, different learned weights. The same token vector
+passes through every block — by the final layer, a simple word embedding has
+become a rich, context-dependent representation tuned for next-token prediction.
+
+Hover a block to see what happens at that depth — and how the word "bank"
+evolves differently depending on whether it's next to "river" or "savings":
+
+<LayerStack client:load />
+
+After the final block, the last token's vector is projected into a score for
+every token in the vocabulary — these scores are called **logits**. Softmax
+turns them into probabilities, and one token is sampled. Ch 6 walks through
+this pipeline.
+
+## Depth vs. width
+
+Drag the sliders to see how depth and width shape a model — and how parameter
+count scales with each. Try the presets to compare real architectures:
+
+<DepthWidth client:load />
+
+<CacheCallout>
+
+**Depth is how the transformer builds abstraction.** Each layer refines the representation: early layers capture syntax and local patterns, later layers capture semantics and long-range dependencies. The residual connection is what makes this depth practical — it gives gradients a clean path back through dozens or hundreds of layers during training, and lets each block focus on learning a small incremental transformation rather than reconstructing the full representation from scratch.
+
+</CacheCallout>

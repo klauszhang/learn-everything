@@ -71,7 +71,6 @@ export default function AttentionWalkthrough() {
   }
   function setQuery(idx: number) {
     setQueryIdx(idx);
-    setStep(0);
   }
 
   return (
@@ -90,29 +89,20 @@ export default function AttentionWalkthrough() {
             </button>
           ))}
         </div>
-        <div className={styles.stepIndicator}>
-          Step {step + 1} / {STEP_COUNT}
-        </div>
       </div>
 
-      <div className={styles.stepBody}>
-        {step === 0 && <Step0 />}
-        {step === 1 && <Step1 queryIdx={queryIdx} />}
-        {step === 2 && <Step2 queryIdx={queryIdx} rawScores={rawScores} />}
-        {step === 3 && <Step3 queryIdx={queryIdx} rawScores={rawScores} weights={weights} />}
-        {step === 4 && (
-          <Step4 queryIdx={queryIdx} weights={weights} output={output} />
-        )}
-      </div>
-
+      {/* Navigation at top */}
       <div className={styles.nav}>
         <button
           className={styles.navBtn}
           onClick={() => setStep((s) => Math.max(0, s - 1))}
           disabled={step === 0}
         >
-          ← Previous
+          ← Prev
         </button>
+        <div className={styles.stepIndicator}>
+          Step {step + 1} / {STEP_COUNT}
+        </div>
         <div className={styles.progressDots} aria-hidden="true">
           {Array.from({ length: STEP_COUNT }, (_, i) => (
             <span
@@ -137,6 +127,16 @@ export default function AttentionWalkthrough() {
         )}
       </div>
 
+      <div className={styles.stepBody}>
+        {step === 0 && <Step0 />}
+        {step === 1 && <Step1 queryIdx={queryIdx} />}
+        {step === 2 && <Step2 queryIdx={queryIdx} rawScores={rawScores} />}
+        {step === 3 && <Step3 queryIdx={queryIdx} rawScores={rawScores} weights={weights} />}
+        {step === 4 && (
+          <Step4 queryIdx={queryIdx} weights={weights} output={output} />
+        )}
+      </div>
+
       <p className={styles.caption}>
         Illustrative — toy 2-D vectors. Real models use thousands of dimensions, but the recipe is identical.
       </p>
@@ -148,42 +148,9 @@ export default function AttentionWalkthrough() {
 function Step0() {
   return (
     <>
-      <h4 className={styles.stepTitle}>Step 1 — The starting vectors</h4>
+      <h4 className={styles.stepTitle}>Starting vectors</h4>
       <p className={styles.stepNarration}>
-        After the embedding layer, every token is just a small list of numbers. In this toy example each token has <code>d_model = 2</code>. Real models use thousands; the recipe below is identical.
-      </p>
-      <div className={styles.tokenTable}>
-        <div className={`${styles.tokenRow} ${styles.tokenRowHeader}`}>
-          <span>token</span>
-          <span>input vector</span>
-          <span></span>
-          <span></span>
-          <span></span>
-        </div>
-        {TOKENS.map((tok) => (
-          <div key={tok.name} className={styles.tokenRow}>
-            <span className={styles.tokenName}>{tok.name}</span>
-            <Vec v={tok.input} />
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-        ))}
-      </div>
-    </>
-  );
-}
-
-/* ─────────── STEP 1: Q, K, V projections ─────────── */
-function Step1({ queryIdx }: { queryIdx: number }) {
-  return (
-    <>
-      <h4 className={styles.stepTitle}>Step 2 — Each token grows three personas: Q, K, V</h4>
-      <p className={styles.stepNarration}>
-        Three learned weight matrices turn each input vector into a <strong>Query</strong>, <strong>Key</strong>, and <strong>Value</strong>. For this toy example we picked simple weights: <code>Q = input</code>, <code>K = input with coords swapped</code>, <code>V = input with +1 added to the 2nd coord</code>.
-      </p>
-      <p className={styles.stepNarration}>
-        Think of it as: <strong>Q</strong> = what this token is asking, <strong>K</strong> = the label it wears, <strong>V</strong> = the payload it'll share if picked.
+        Each token is a 2-D vector (real models use thousands of dimensions — same recipe).
       </p>
       <div className={styles.tokenTable}>
         <div className={`${styles.tokenRow} ${styles.tokenRowHeader}`}>
@@ -193,16 +160,50 @@ function Step1({ queryIdx }: { queryIdx: number }) {
           <span>K</span>
           <span>V</span>
         </div>
+        {TOKENS.map((tok) => (
+          <div key={tok.name} className={styles.tokenRow}>
+            <span className={styles.tokenName}>{tok.name}</span>
+            <Vec v={tok.input} />
+            <Vec v={tok.Q} />
+            <Vec v={tok.K} />
+            <Vec v={tok.V} />
+          </div>
+        ))}
+      </div>
+      <p className={styles.stepNarration} style={{ marginTop: "0.75rem" }}>
+        Each token already has its Q, K, V (projected from the input via learned weight matrices).
+      </p>
+    </>
+  );
+}
+
+/* ─────────── STEP 1: Q, K, V roles ─────────── */
+function Step1({ queryIdx }: { queryIdx: number }) {
+  const query = TOKENS[queryIdx];
+  return (
+    <>
+      <h4 className={styles.stepTitle}>The query asks, keys answer</h4>
+      <p className={styles.stepNarration}>
+        <strong>{query.name}</strong>'s Query <code>Q = <Vec v={query.Q} highlight /></code> is the search term. It will be compared against every token's Key to find the best matches.
+      </p>
+      <div className={styles.tokenTable}>
+        <div className={`${styles.tokenRow} ${styles.tokenRowHeader}`}>
+          <span>token</span>
+          <span>K (advertises)</span>
+          <span>V (payload)</span>
+          <span></span>
+          <span></span>
+        </div>
         {TOKENS.map((tok, i) => (
           <div
             key={tok.name}
             className={`${styles.tokenRow} ${i === queryIdx ? styles.tokenRowFocus : ""}`}
           >
             <span className={styles.tokenName}>{tok.name}</span>
-            <Vec v={tok.input} />
-            <Vec v={tok.Q} highlight={i === queryIdx} />
             <Vec v={tok.K} />
             <Vec v={tok.V} />
+            <span></span>
+            <span>{i === queryIdx ? "← querying" : ""}</span>
           </div>
         ))}
       </div>
@@ -217,9 +218,9 @@ function Step2({ queryIdx, rawScores }: { queryIdx: number; rawScores: number[] 
 
   return (
     <>
-      <h4 className={styles.stepTitle}>Step 3 — Score every visible token</h4>
+      <h4 className={styles.stepTitle}>Score: Q · K dot products</h4>
       <p className={styles.stepNarration}>
-        Take <strong>{query.name}</strong>'s query <code>Q = [{fmt(query.Q[0])}, {fmt(query.Q[1])}]</code> and compute the <strong>dot product</strong> with each token's key. The dot product <code>[a, b] · [c, d] = a·c + b·d</code> measures how aligned two vectors are — bigger = better match. Future tokens are <strong>masked</strong> (the causal rule).
+        How well does <strong>{query.name}</strong>'s query match each token's key? The dot product measures alignment — higher = stronger match. Future tokens are masked.
       </p>
       <div className={styles.scoreList}>
         {TOKENS.map((tok, j) => {
@@ -232,27 +233,23 @@ function Step2({ queryIdx, rawScores }: { queryIdx: number; rawScores: number[] 
             >
               <span>
                 <code>
-                  Q_{query.name} · K_{tok.name}
+                  Q<sub>{query.name}</sub> · K<sub>{tok.name}</sub>
                 </code>
               </span>
-              <span className={styles.scoreCalc}>
-                {masked ? (
-                  <em>masked (future token)</em>
-                ) : (
-                  <>
-                    [{fmt(query.Q[0])}, {fmt(query.Q[1])}] · [{fmt(tok.K[0])}, {fmt(tok.K[1])}] ={" "}
-                    {fmt(query.Q[0])}·{fmt(tok.K[0])} + {fmt(query.Q[1])}·{fmt(tok.K[1])}
-                    {Number.isFinite(score) && (
-                      <span
-                        className={styles.bar}
-                        style={{ width: `${(Math.abs(score) / maxAbs) * 80}px` }}
-                      />
-                    )}
-                  </>
-                )}
-              </span>
+              {masked ? (
+                <span className={styles.scoreCalc}><em>masked (future)</em></span>
+              ) : (
+                <span>
+                  <div className={styles.barTrack}>
+                    <div
+                      className={styles.barFill}
+                      style={{ width: `${(Math.abs(score) / maxAbs) * 100}%` }}
+                    />
+                  </div>
+                </span>
+              )}
               <span className={styles.scoreResult}>
-                {masked ? "—" : `= ${fmt(score)}`}
+                {masked ? "—" : fmt(score)}
               </span>
             </div>
           );
@@ -265,7 +262,6 @@ function Step2({ queryIdx, rawScores }: { queryIdx: number; rawScores: number[] 
 /* ─────────── STEP 3: softmax → weights ─────────── */
 function Step3({
   queryIdx,
-  rawScores,
   weights,
 }: {
   queryIdx: number;
@@ -274,9 +270,9 @@ function Step3({
 }) {
   return (
     <>
-      <h4 className={styles.stepTitle}>Step 4 — Softmax the scores into weights</h4>
+      <h4 className={styles.stepTitle}>Softmax → attention weights</h4>
       <p className={styles.stepNarration}>
-        Softmax turns raw scores into positive numbers that <strong>sum to 1</strong>. Bigger scores get bigger shares. The masked tokens contribute <code>0</code>.
+        Softmax converts raw scores into percentages that <strong>sum to 100%</strong>. Bigger scores get bigger shares. Masked tokens get 0%.
       </p>
       <div className={styles.scoreList}>
         {TOKENS.map((tok, j) => {
@@ -288,23 +284,17 @@ function Step3({
                 <code>{TOKENS[queryIdx].name} → {tok.name}</code>
               </span>
               <span>
-                <span className={styles.scoreCalc}>
-                  score {masked ? "= masked" : `= ${fmt(rawScores[j])}`}
-                </span>
-                <div className={styles.barTrack} style={{ marginTop: 4 }}>
+                <div className={styles.barTrack}>
                   <div className={styles.barFill} style={{ width: `${w * 100}%` }} />
                 </div>
               </span>
               <span className={styles.scoreResult}>
-                {(w * 100).toFixed(0)}%
+                {masked ? "0%" : `${(w * 100).toFixed(0)}%`}
               </span>
             </div>
           );
         })}
       </div>
-      <p className={styles.stepNarration} style={{ marginTop: "1rem" }}>
-        These percentages add up to 100% — they're how much <strong>{TOKENS[queryIdx].name}</strong> will draw from each token's V in the next step.
-      </p>
     </>
   );
 }
@@ -321,28 +311,28 @@ function Step4({
 }) {
   return (
     <>
-      <h4 className={styles.stepTitle}>Step 5 — Blend the V vectors</h4>
+      <h4 className={styles.stepTitle}>Blend the Value vectors</h4>
       <p className={styles.stepNarration}>
-        Multiply each token's V by its weight, then add them all up. The result is <strong>{TOKENS[queryIdx].name}</strong>'s new context-aware representation, ready to flow into the next layer.
+        Multiply each token's V by its attention weight, then sum. The result is <strong>{TOKENS[queryIdx].name}</strong>'s new context-aware representation.
       </p>
       <div className={styles.blendStack}>
         {TOKENS.map((tok, j) => {
           const w = weights[j];
           const contrib: Vec2 = [w * tok.V[0], w * tok.V[1]];
           return (
-            <div key={tok.name} className={styles.blendRow}>
+            <div key={tok.name} className={styles.blendRow} style={{ opacity: w < 0.01 ? 0.3 : 1 }}>
               <span>
-                <code>{fmt(w)} · V_{tok.name}</code>
+                <code>{(w * 100).toFixed(0)}% × V<sub>{tok.name}</sub></code>
               </span>
               <span style={{ fontFamily: "var(--font-mono)", fontSize: "0.85rem" }}>
-                {fmt(w)} · [{fmt(tok.V[0])}, {fmt(tok.V[1])}] = <Vec v={contrib} />
+                = <Vec v={contrib} />
               </span>
             </div>
           );
         })}
       </div>
       <div className={styles.blendSum}>
-        output_{TOKENS[queryIdx].name} = <Vec v={output} highlight />
+        output<sub>{TOKENS[queryIdx].name}</sub> = <Vec v={output} highlight />
       </div>
     </>
   );

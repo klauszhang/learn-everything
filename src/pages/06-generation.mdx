@@ -1,0 +1,60 @@
+---
+layout: ../layouts/ChapterLayout.astro
+title: "Ch 6 — Generation"
+chapterNumber: 6
+takeaway: "Generation is a two-phase process: one parallel prefill pass over the prompt, then one sequential decode step per token. Each decode step turns the final layer's hidden state into a probability distribution over the vocabulary, then samples from it — with temperature, top-k, and top-p controlling how that sample is taken."
+prev: "/05-stacking"
+next: "/"
+---
+
+import OutputHeadPipeline from '../components/OutputHeadPipeline.tsx';
+import SamplingDials from '../components/SamplingDials.tsx';
+import PrefillDecodeSplit from '../components/PrefillDecodeSplit.tsx';
+import AutoregressiveStep from '../components/AutoregressiveStep.tsx';
+import CacheCallout from '../components/CacheCallout.astro';
+
+## From hidden state to next token
+
+After the final transformer block, only the **last token's** hidden state matters —
+it carries the model's representation of "what comes next." Step through the
+pipeline that converts it into a token selection:
+
+<OutputHeadPipeline client:load />
+
+## Sampling strategies
+
+The probability distribution gives every vocabulary token a score. **Temperature**
+reshapes that distribution before sampling — drag the slider to see how:
+
+<SamplingDials client:load />
+
+**Top-k** restricts sampling to only the `k` highest-probability tokens; everything
+else is zeroed out and the rest renormalized. **Top-p (nucleus)** instead keeps the
+smallest set of tokens whose cumulative probability reaches `p` — adapting
+dynamically to the model's confidence. In practice, temperature + top-p are
+combined: temperature adjusts the shape, top-p clips the tail.
+
+## Prefill vs. decode
+
+Generation has two phases that behave very differently inside the model. Hit
+"Run" to watch the prompt processed in parallel, then tokens generated one at
+a time:
+
+<PrefillDecodeSplit client:load />
+
+The asymmetry matters for latency. A 200-token response to a 1,000-token prompt
+means one fast prefill pass followed by 200 sequential decode steps — each one
+re-reading the cached K and V vectors for all prior tokens.
+
+## Step through generation
+
+Walk through prefill and the first several decode steps. Blue tokens are the
+original prompt; green tokens are previously generated output:
+
+<AutoregressiveStep client:load />
+
+<CacheCallout>
+
+**Generation is the transformer's output loop.** The model produces one token at a time: the full sequence runs through every layer, the final hidden state at the last position is projected into a probability distribution over the vocabulary, and one token is sampled. That token is appended to the sequence and the process repeats. Temperature, top-p, and top-k shape the sampling — they control the tradeoff between coherence and diversity without changing the model's learned distribution.
+
+</CacheCallout>

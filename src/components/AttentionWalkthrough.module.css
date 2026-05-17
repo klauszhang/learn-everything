@@ -4,9 +4,11 @@
   margin: var(--space-8) 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
-  padding: var(--space-5);
+  padding: var(--space-6) var(--space-8);
   background: var(--color-surface);
   font-family: var(--font-body);
+  max-width: var(--content-max, 720px);
+  overflow-x: auto;
 }
 
 /* Top bar — query picker + step indicator */
@@ -16,9 +18,8 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  margin-bottom: var(--space-4);
-  padding-bottom: var(--space-3);
-  border-bottom: 1px dashed var(--color-border);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
 }
 
 .picker {
@@ -160,13 +161,14 @@
 
 .scoreRow {
   display: grid;
-  grid-template-columns: 110px 1fr 60px;
+  grid-template-columns: auto 1fr auto;
   gap: var(--space-3);
   align-items: center;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
+  white-space: nowrap;
 }
 
 .scoreRowMasked {
@@ -182,7 +184,10 @@
 
 .scoreCalc {
   color: var(--color-muted);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .scoreResult {
@@ -203,15 +208,16 @@
 
 .weightRow {
   display: grid;
-  grid-template-columns: 110px 1fr 60px;
+  grid-template-columns: auto 1fr auto;
   gap: var(--space-3);
   align-items: center;
-  padding: 8px 10px;
+  padding: 6px 10px;
   border-radius: 4px;
   border: 1px solid var(--color-border);
   background: var(--color-bg);
   font-family: var(--font-mono);
   font-size: 0.85rem;
+  white-space: nowrap;
 }
 
 .barTrack {
@@ -239,13 +245,14 @@
 
 .blendRow {
   display: grid;
-  grid-template-columns: 110px 1fr;
+  grid-template-columns: auto 1fr;
   gap: var(--space-3);
   align-items: center;
   padding: 6px 10px;
   border-radius: 4px;
   background: var(--color-bg);
   border: 1px solid var(--color-border);
+  white-space: nowrap;
 }
 
 .blendSum {
@@ -268,12 +275,11 @@
 /* Nav buttons */
 .nav {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   gap: var(--space-3);
-  margin-top: var(--space-4);
-  padding-top: var(--space-3);
-  border-top: 1px dashed var(--color-border);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px dashed var(--color-border);
 }
 
 .navBtn {
@@ -338,4 +344,20 @@
   color: var(--color-muted);
   font-style: italic;
   text-align: center;
+}
+
+@media (max-width: 640px) {
+  .tokenRow {
+    grid-template-columns: 40px repeat(4, 1fr);
+    gap: var(--space-1);
+    font-size: 0.75rem;
+  }
+  .scoreRow,
+  .weightRow {
+    grid-template-columns: auto 1fr auto;
+    font-size: 0.75rem;
+  }
+  .vecNum {
+    min-width: 20px;
+  }
 }

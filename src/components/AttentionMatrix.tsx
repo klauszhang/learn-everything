@@ -36,7 +36,7 @@ export default function AttentionMatrix() {
       <p className={styles.axisCaption}>
         Rows are <strong>query</strong> tokens (asking). Columns are <strong>key</strong> tokens (what's being asked about). The upper-right triangle is empty — that's the causal mask.
       </p>
-      <div className={styles.wrapper} role="group" aria-label="Attention weight matrix — illustrative">
+      <div className={styles.wrapper} role="group" aria-label="Attention weight matrix — illustrative" style={{ "--cols": N } as React.CSSProperties}>
         {/* Top-left corner spacer */}
         <div className={styles.corner} />
 
@@ -131,7 +131,7 @@ export default function AttentionMatrix() {
       )}
 
       <figcaption className={styles.caption}>
-        Illustrative attention weights — not from a real model. Each row shows how one query token distributes attention across earlier (visible) key tokens. Upper-right triangle is empty because of the <strong>causal mask</strong>: a token cannot attend to tokens that come after it.
+        Illustrative — derived from the same Q/K vectors as the diagram above.
       </figcaption>
     </figure>
   );
