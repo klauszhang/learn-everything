@@ -2,15 +2,639 @@
 layout: ../layouts/ChapterLayout.astro
 title: "ANN & vector indexes"
 chapterNumber: null
-takeaway: "HNSW, IVF, the recall-latency-memory triangle, and why production retrieval is approximate by design."
+takeaway: "HNSW, IVF+PQ, the recall-latency-memory triangle, and why production retrieval is approximate by design."
 prev: "/rag"
 next: "/search-engines"
 ---
 
+import AnnIndexDemo from '../components/AnnIndexDemo.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/ann-vector-indexes.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+In the last chapter you saw how embeddings let you find similar documents: the closer two vectors are in embedding space, the closer in meaning the texts they represent. The demo there worked on a dozen documents. Now the question is: what happens when you have ten million?
+
+A cosine similarity check against one stored vector takes a few microseconds. Ten million of them — one per document, once per query — takes somewhere between 200 and 500 milliseconds on a modern CPU. At 10,000 queries per hour that's 100 billion distance computations hourly. No live system can absorb that cost and still respond in the time it takes to press Enter.
+
+The naive fix — faster hardware — doesn't close the gap. Linear scan scales as O(N × D) where N is the document count and D is the vector dimension. Double your hardware budget and you halve your latency; double your corpus and you double it back. You can't hardware-spend your way out of a linear scaling problem. You need a structure that lets you skip most of the corpus.
+
+That structure is an **approximate nearest neighbor (ANN) index**. It accepts a carefully bounded risk of missing the single closest match — "approximate" is doing real work in that name — and in exchange returns answers in milliseconds. The bet it makes: the 2nd or 3rd nearest neighbor is usually close enough to the 1st that you don't notice the miss. For semantic retrieval of natural language, that bet almost always pays off.
+
+## The three-way tradeoff
+
+Every ANN system navigates a triangle. The three corners are **recall**, **latency**, and **memory**. You can tune toward any two; the third suffers.
+
+{/* Static SVG: the recall / latency / memory tradeoff triangle */}
+<svg
+  viewBox="0 0 460 240"
+  width="460"
+  height="240"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-label="Triangle diagram: three corners labeled Recall, Speed, and Memory. Three dots show where Flat, HNSW, and IVF+PQ sit on the triangle."
+  className="ann-triangle-svg"
+>
+  {/* Triangle */}
+  <polygon points="230,24 430,208 30,208" fill="none" stroke="#e5e7eb" strokeWidth="1.5" />
+
+  {/* Corner labels */}
+  <text x="230" y="16" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Recall</text>
+  <text x="440" y="222" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Speed</text>
+  <text x="18"  y="222" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a" fontFamily="system-ui,sans-serif">Memory</text>
+
+  {/* Flat — near Recall apex */}
+  <circle cx="230" cy="55" r="8" fill="#8b5cf6" />
+  <text x="248" y="52" fontSize="11" fill="#8b5cf6" fontFamily="system-ui,sans-serif">Flat (exact)</text>
+  <text x="248" y="64" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif">100% recall, slow</text>
+
+  {/* HNSW — near Speed+Recall */}
+  <circle cx="360" cy="140" r="8" fill="#3b82f6" />
+  <text x="374" y="137" fontSize="11" fill="#3b82f6" fontFamily="system-ui,sans-serif">HNSW</text>
+  <text x="374" y="149" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif">Fast, high recall, high RAM</text>
+
+  {/* IVF+PQ — near Speed+Memory */}
+  <circle cx="105" cy="180" r="8" fill="#10b981" />
+  <text x="36"  y="177" fontSize="11" fill="#10b981" fontFamily="system-ui,sans-serif" textAnchor="start">IVF+PQ</text>
+  <text x="36"  y="189" fontSize="10" fill="#9ca3af" fontFamily="system-ui,sans-serif" textAnchor="start">Compact, moderate recall</text>
+
+  <text x="8" y="236" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — positions approximate typical tradeoffs, not precise measurements.</text>
+</svg>
+
+**Recall@K** measures how many of the true K nearest neighbors you actually get back. You establish ground truth by running an exact brute-force search, then compare what the ANN index returned. If the true top-5 for a query are A, B, C, D, E and the index returns A, B, C, D, F — that's Recall@5 = 0.80 (four of five correct). A system with Recall@10 of 0.95 finds, on average, 9.5 of the 10 true nearest neighbors. The missed one is usually so close in semantic space to what was returned that the difference in answer quality is undetectable.
+
+The table below gives directional estimates. These numbers are illustrative syntheses from FAISS benchmarks and Pinecone's published comparisons — exact values depend on dimensionality, tuning parameters, and hardware.
+
+<div className="ann-table-wrap">
+
+| Approach | Recall@10 (typical) | Query latency, 10M vectors | RAM vs. raw vectors |
+|---|---|---|---|
+| Exact / Flat | 100% | 200–500 ms | ~1× (vectors only) |
+| HNSW | ~90–98% | ~1–5 ms | ~2–4× (vectors + graph) |
+| IVF+PQ | ~80–90% | ~5–20 ms | ~0.02–0.05× (compressed) |
+
+</div>
+
+The 80–95% recall range is almost always good enough for semantic retrieval. Going from 95% to 99% recall typically requires 3× more search work, while the improvement in retrieved text quality is usually imperceptible. The difference between the 5th-nearest and 6th-nearest document in semantic space is usually a sentence or two of relevance — not the difference between a correct and wrong answer.
+
+## Exact search: the brute-force baseline
+
+Before approximation, understand what is being approximated.
+
+The **Flat index** is the simplest possible structure: for every query, compute the distance between the query vector and every stored vector, then return the K smallest. No graph, no clustering, no training. Just a flat array of vectors. Recall is 100% by definition — whatever the true K nearest neighbors are, you get them.
+
+Latency is linear in corpus size. A 1M-vector Flat index on CPU might return results in about 50 milliseconds; 10M vectors takes around 500 milliseconds. At 100M vectors, brute force is no longer viable for interactive use.
+
+The Flat index earns its place for corpora below roughly 100,000 vectors where query latency requirements are modest, or for batch processing jobs where queries are infrequent. More importantly, it is the reference implementation — when you want to know a system's "true" recall, you compare against Flat results. Every recall number quoted above was measured this way.
+
+{/*
+  Toggle diagram: Exact search vs HNSW explored subgraph.
+  Same 60-point scatter, same query (Q, Finance cluster), same top-5 result (amber rings).
+  Exact mode: grey dashed lines to all 60 dots, counter "60 / 60".
+  HNSW mode: only ~15 visited nodes highlighted (var(--color-accent)), edges between them,
+             counter "15 / 60".
+  Implemented as inline SVG + HTML button; CSS class ".hnsw-mode" on the wrapper
+  switches visibility of two layers. No React needed — plain JS event listener.
+*/}
+
+<div class="ann-toggle-wrap" id="ann-toggle-wrap">
+  <div class="ann-toggle-header">
+    <span class="ann-toggle-title">Exact search vs HNSW</span>
+    <button class="ann-toggle-btn" id="ann-toggle-btn" aria-pressed="false">
+      Show: <strong>Exact search</strong>
+    </button>
+    <span class="ann-counter" id="ann-counter">Comparisons: <strong>60 / 60</strong></span>
+  </div>
+
+  <svg
+    viewBox="0 0 520 370"
+    width="520"
+    height="370"
+    class="ann-scatter-svg"
+    aria-label="Illustrative 2D scatter of 60 document points. Toggle between exact search (all points compared) and HNSW (only visited subgraph highlighted)."
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    {/* Cluster region hints */}
+    <text x="135" y="22"  textAnchor="middle" fontSize="10" fill="#8b5cf6" opacity="0.7" fontFamily="system-ui,sans-serif">Finance</text>
+    <text x="415" y="22"  textAnchor="middle" fontSize="10" fill="#10b981" opacity="0.7" fontFamily="system-ui,sans-serif">Legal</text>
+    <text x="135" y="355" textAnchor="middle" fontSize="10" fill="#3b82f6" opacity="0.7" fontFamily="system-ui,sans-serif">Engineering</text>
+    <text x="415" y="355" textAnchor="middle" fontSize="10" fill="#f97316" opacity="0.7" fontFamily="system-ui,sans-serif">Marketing</text>
+    <text x="270" y="190" textAnchor="middle" fontSize="10" fill="#ec4899" opacity="0.7" fontFamily="system-ui,sans-serif">HR</text>
+
+    {/* ── EXACT MODE: dashed lines from query to all 60 dots ── */}
+    {/* Finance cluster */}
+    <line class="exact-line" x1="107" y1="63" x2="40" y2="54"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="76" y2="81"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="96" y2="95"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="117"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="129" y2="41"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="77" y2="126"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="107" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="42" y2="78"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="101" y2="142" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="74" y2="38"   stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    {/* Legal cluster */}
+    <line class="exact-line" x1="107" y1="63" x2="388" y2="38"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="424" y2="57"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="403" y2="88"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="455" y2="73"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="371" y2="67"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="440" y2="30"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="415" y2="115" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="362" y2="105" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="467" y2="106" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="393" y2="54"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    {/* Engineering cluster */}
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="305"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="92" y2="320"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="112" y2="285" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="56" y2="345"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="308" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="36" y2="330"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="128" y2="348" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="74" y2="350"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="100" y2="340" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="44" y2="285"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    {/* Marketing cluster */}
+    <line class="exact-line" x1="107" y1="63" x2="388" y2="308" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="424" y2="330" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="403" y2="285" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="455" y2="345" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="371" y2="348" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="440" y2="315" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="415" y2="350" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="362" y2="320" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="467" y2="320" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="393" y2="330" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    {/* HR cluster */}
+    <line class="exact-line" x1="107" y1="63" x2="228" y2="202" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="264" y2="226" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="244" y2="252" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="298" y2="212" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="212" y2="232" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="281" y2="254" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="308" y2="192" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="204" y2="212" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="256" y2="178" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="290" y2="232" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    {/* Noise */}
+    <line class="exact-line" x1="107" y1="63" x2="180" y2="88"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="320" y2="245" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="231" y2="318" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="153" y2="220" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="336" y2="165" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="195" y2="278" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="283" y2="302" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="143" y2="168" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="372" y2="228" stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+    <line class="exact-line" x1="107" y1="63" x2="245" y2="98"  stroke="#d1d5db" strokeWidth="0.8" strokeDasharray="3 3" />
+
+    {/* ── HNSW MODE: edges between visited nodes ── */}
+    {/* Layer 2 long-range hop: HR hub → Finance hub */}
+    <line class="hnsw-edge" x1="256" y1="178" x2="96" y2="95"  stroke="#6366f1" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.7" />
+    {/* Layer 1 hops within Finance */}
+    <line class="hnsw-edge" x1="96"  y1="95"  x2="76" y2="81"  stroke="#3b82f6" strokeWidth="1.5" opacity="0.7" />
+    <line class="hnsw-edge" x1="76"  y1="81"  x2="40" y2="54"  stroke="#3b82f6" strokeWidth="1.5" opacity="0.7" />
+    <line class="hnsw-edge" x1="76"  y1="81"  x2="129" y2="41" stroke="#3b82f6" strokeWidth="1.5" opacity="0.6" />
+    {/* Layer 0 local hops */}
+    <line class="hnsw-edge" x1="40"  y1="54"  x2="42" y2="78"  stroke="#22c55e" strokeWidth="1.2" opacity="0.6" />
+    <line class="hnsw-edge" x1="40"  y1="54"  x2="74" y2="38"  stroke="#22c55e" strokeWidth="1.2" opacity="0.6" />
+    <line class="hnsw-edge" x1="42"  y1="78"  x2="77" y2="126" stroke="#22c55e" strokeWidth="1.2" opacity="0.5" />
+    <line class="hnsw-edge" x1="129" y1="41"  x2="143" y2="107" stroke="#22c55e" strokeWidth="1.2" opacity="0.5" />
+
+    {/* ── ALL DOTS (always visible, opacity changes) ── */}
+    {/* Finance cluster — true top-5 result dots: f2(76,81), f3(96,95), f1(40,54), f6(77,126), f8(42,78) */}
+    {/* f1 */}
+    <circle class="dot-unvisited" cx="40"  cy="54"  r="5.5" fill="#8b5cf6" opacity="0.35" />
+    <circle class="dot-visited"   cx="40"  cy="54"  r="5.5" fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-result-ring" cx="40" cy="54"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    {/* f2 */}
+    <circle class="dot-unvisited" cx="76"  cy="81"  r="5.5" fill="#8b5cf6" opacity="0.35" />
+    <circle class="dot-visited"   cx="76"  cy="81"  r="5.5" fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-result-ring" cx="76" cy="81"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    {/* f3 */}
+    <circle class="dot-unvisited" cx="96"  cy="95"  r="5.5" fill="#8b5cf6" opacity="0.35" />
+    <circle class="dot-visited"   cx="96"  cy="95"  r="5.5" fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-result-ring" cx="96" cy="95"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    {/* f4 */}
+    <circle class="dot-unvisited" cx="44"  cy="117" r="5"   fill="#8b5cf6" opacity="0.25" />
+    <circle class="dot-visited"   cx="44"  cy="117" r="5"   fill="var(--color-accent)" opacity="0" />
+    {/* f5 */}
+    <circle class="dot-unvisited" cx="129" cy="41"  r="5"   fill="#8b5cf6" opacity="0.25" />
+    <circle class="dot-visited"   cx="129" cy="41"  r="5"   fill="var(--color-accent)" opacity="0" />
+    {/* f6 */}
+    <circle class="dot-unvisited" cx="77"  cy="126" r="5.5" fill="#8b5cf6" opacity="0.35" />
+    <circle class="dot-visited"   cx="77"  cy="126" r="5.5" fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-result-ring" cx="77" cy="126" r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    {/* f7 */}
+    <circle class="dot-unvisited" cx="143" cy="107" r="5"   fill="#8b5cf6" opacity="0.25" />
+    <circle class="dot-visited"   cx="143" cy="107" r="5"   fill="var(--color-accent)" opacity="0" />
+    {/* f8 */}
+    <circle class="dot-unvisited" cx="42"  cy="78"  r="5.5" fill="#8b5cf6" opacity="0.35" />
+    <circle class="dot-visited"   cx="42"  cy="78"  r="5.5" fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-result-ring" cx="42" cy="78"  r="10"  fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0" />
+    {/* f9 */}
+    <circle class="dot-unvisited" cx="101" cy="142" r="5"   fill="#8b5cf6" opacity="0.25" />
+    <circle class="dot-visited"   cx="101" cy="142" r="5"   fill="var(--color-accent)" opacity="0" />
+    {/* f10 */}
+    <circle class="dot-unvisited" cx="74"  cy="38"  r="5"   fill="#8b5cf6" opacity="0.25" />
+    <circle class="dot-visited"   cx="74"  cy="38"  r="5"   fill="var(--color-accent)" opacity="0" />
+
+    {/* Legal cluster (never visited, always dim) */}
+    <circle class="dot-unvisited" cx="388" cy="38"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="424" cy="57"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="403" cy="88"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="455" cy="73"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="371" cy="67"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="440" cy="30"  r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="415" cy="115" r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="362" cy="105" r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="467" cy="106" r="5"   fill="#10b981" opacity="0.25" />
+    <circle class="dot-unvisited" cx="393" cy="54"  r="5"   fill="#10b981" opacity="0.25" />
+
+    {/* Engineering cluster (never visited, always dim) */}
+    <circle class="dot-unvisited" cx="44"  cy="305" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="92"  cy="320" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="112" cy="285" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="56"  cy="345" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="143" cy="308" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="36"  cy="330" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="128" cy="348" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="74"  cy="350" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="100" cy="340" r="5"   fill="#3b82f6" opacity="0.25" />
+    <circle class="dot-unvisited" cx="44"  cy="285" r="5"   fill="#3b82f6" opacity="0.25" />
+
+    {/* Marketing cluster (never visited, always dim) */}
+    <circle class="dot-unvisited" cx="388" cy="308" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="424" cy="330" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="403" cy="285" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="455" cy="345" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="371" cy="348" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="440" cy="315" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="415" cy="350" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="362" cy="320" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="467" cy="320" r="5"   fill="#f97316" opacity="0.25" />
+    <circle class="dot-unvisited" cx="393" cy="330" r="5"   fill="#f97316" opacity="0.25" />
+
+    {/* HR cluster — layer-2 hub visited in HNSW */}
+    <circle class="dot-unvisited" cx="228" cy="202" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="264" cy="226" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="244" cy="252" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="298" cy="212" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="212" cy="232" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="281" cy="254" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="308" cy="192" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="204" cy="212" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-visited"   cx="256" cy="178" r="5"   fill="var(--color-accent)" opacity="0" />
+    <circle class="dot-unvisited-hr-hub" cx="256" cy="178" r="5"   fill="#ec4899" opacity="0.25" />
+    <circle class="dot-unvisited" cx="290" cy="232" r="5"   fill="#ec4899" opacity="0.25" />
+
+    {/* Noise (never visited, dim) */}
+    <circle class="dot-unvisited" cx="180" cy="88"  r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="320" cy="245" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="231" cy="318" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="153" cy="220" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="336" cy="165" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="195" cy="278" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="283" cy="302" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="143" cy="168" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="372" cy="228" r="5"   fill="#9ca3af" opacity="0.25" />
+    <circle class="dot-unvisited" cx="245" cy="98"  r="5"   fill="#9ca3af" opacity="0.25" />
+
+    {/* ── RESULT RINGS — always shown in BOTH modes ── */}
+    {/* These are shown in exact mode too: exact search circles the top 5 */}
+    <circle class="result-ring-exact" cx="40"  cy="54"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="76"  cy="81"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="96"  cy="95"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="77"  cy="126" r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+    <circle class="result-ring-exact" cx="42"  cy="78"  r="10" fill="none" stroke="var(--color-accent)" strokeWidth="2" opacity="0.9" />
+
+    {/* Query marker */}
+    <circle cx="107" cy="63" r="10" fill="var(--color-accent)" stroke="white" strokeWidth="2.5" />
+    <text x="107" y="67" textAnchor="middle" fontSize="9" fill="white" fontWeight="700" fontFamily="system-ui,sans-serif">Q</text>
+    <text x="107" y="50" textAnchor="middle" fontSize="9" fill="var(--color-accent)" fontWeight="600" fontFamily="system-ui,sans-serif">"revenue outlook"</text>
+
+    {/* Legend */}
+    <circle cx="16" cy="358" r="5" fill="var(--color-accent)" opacity="0.9" />
+    <text x="26" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Top-5 result</text>
+    <circle cx="110" cy="358" r="5" fill="var(--color-accent)" opacity="0.35" />
+    <text x="120" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Visited (HNSW)</text>
+    <circle cx="220" cy="358" r="5" fill="#8b5cf6" opacity="0.25" />
+    <text x="230" y="362" fontSize="9" fill="#6b7280" fontFamily="system-ui,sans-serif">Not visited</text>
+    <text x="8" y="374" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — hand-authored layout, not real model output.</text>
+  </svg>
+</div>
+
+<script>{`
+  (function() {
+    var wrap = document.getElementById('ann-toggle-wrap');
+    var btn  = document.getElementById('ann-toggle-btn');
+    var ctr  = document.getElementById('ann-counter');
+    if (!wrap || !btn || !ctr) return;
+    var hnsw = false;
+    function update() {
+      if (hnsw) {
+        wrap.classList.add('hnsw-mode');
+        btn.setAttribute('aria-pressed', 'true');
+        btn.innerHTML = 'Show: <strong>HNSW search</strong>';
+        ctr.innerHTML = 'Comparisons: <strong>15 / 60</strong>';
+      } else {
+        wrap.classList.remove('hnsw-mode');
+        btn.setAttribute('aria-pressed', 'false');
+        btn.innerHTML = 'Show: <strong>Exact search</strong>';
+        ctr.innerHTML = 'Comparisons: <strong>60 / 60</strong>';
+      }
+    }
+    btn.addEventListener('click', function() { hnsw = !hnsw; update(); });
+    update();
+  })();
+`}</script>
+
+The diagram above shows the same query ("revenue outlook") in two modes. In exact search mode, dashed lines radiate to all 60 points — the system must check every one. In HNSW mode, only about 15 nodes are touched; the algorithm starts in the HR cluster (the layer-2 entry point), takes one long cross-space hop to the Finance cluster, and then zooms in locally. Both modes find the same 5 results (circled). The counter shows the cost: 60 comparisons vs 15.
+
+## HNSW: navigating a layered graph
+
+**HNSW (Hierarchical Navigable Small Worlds)** is a graph-based algorithm that, as of 2025–2026, is the dominant index type for latency-sensitive deployments. It is the default or preferred algorithm in Weaviate, Qdrant, Milvus, and pgvector.
+
+The navigation intuition is best explained with a zoom-level analogy. Imagine you're looking for a specific restaurant in an unfamiliar city. Walking block-by-block from your hotel would eventually work — but it could take hours. A smarter strategy: zoom out to a highway map, drive to the right neighborhood, switch to a street-level view, then walk the last block. Each transition refines your search from "coarse and fast" to "fine and slow."
+
+HNSW applies exactly this strategy to a high-dimensional point cloud. When a new vector is inserted, the algorithm assigns it to one or more layers using a randomized distribution: most vectors land only in layer 0, a fraction appear in layer 1, an even smaller fraction in layer 2, and so on.
+
+{/* Inline SVG: HNSW layer diagram */}
+<svg
+  viewBox="0 0 500 260"
+  width="500"
+  height="260"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-label="HNSW layer diagram. Three horizontal bands: a sparse top layer with 5 nodes connected by long-range edges, a medium middle layer, and a dense bottom layer with short local edges. A query path traces from top to bottom."
+  className="ann-hnsw-svg"
+>
+  {/* Layer bands */}
+  <rect x="0"   y="0"   width="500" height="70"  fill="#f0f9ff" />
+  <rect x="0"   y="70"  width="500" height="80"  fill="#f8fafc" />
+  <rect x="0"   y="150" width="500" height="110" fill="#ffffff" />
+
+  {/* Layer labels */}
+  <text x="8" y="38" fontSize="10" fill="#0369a1" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 2 — sparse (6 nodes)</text>
+  <text x="8" y="50" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Long-range "highway" links — coarse navigation</text>
+  <text x="8" y="114" fontSize="10" fill="#374151" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 1 — medium (18 nodes)</text>
+  <text x="8" y="126" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Neighborhood-level links</text>
+  <text x="8" y="175" fontSize="10" fill="#374151" fontWeight="600" fontFamily="system-ui,sans-serif">Layer 0 — dense (all 60 nodes)</text>
+  <text x="8" y="187" fontSize="9"  fill="#9ca3af" fontFamily="system-ui,sans-serif">Short local links — precise search</text>
+
+  {/* Layer 2 nodes + long-range edge */}
+  <circle cx="100" cy="36" r="7" fill="#3b82f6" opacity="0.85" />
+  <circle cx="200" cy="42" r="7" fill="#8b5cf6" opacity="0.65" />
+  <circle cx="320" cy="32" r="7" fill="#10b981" opacity="0.65" />
+  <circle cx="430" cy="44" r="7" fill="#f97316" opacity="0.65" />
+  <line x1="100" y1="36" x2="320" y2="32" stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.55" />
+  <line x1="320" y1="32" x2="430" y2="44" stroke="#10b981" strokeWidth="1.5" strokeDasharray="6 3" opacity="0.45" />
+
+  {/* Layer 1 nodes + medium edges */}
+  <circle cx="80"  cy="110" r="6" fill="#3b82f6" opacity="0.7"  />
+  <circle cx="130" cy="118" r="6" fill="#3b82f6" opacity="0.7"  />
+  <circle cx="170" cy="105" r="6" fill="#8b5cf6" opacity="0.5"  />
+  <circle cx="240" cy="115" r="6" fill="#ec4899" opacity="0.5"  />
+  <circle cx="310" cy="106" r="6" fill="#10b981" opacity="0.5"  />
+  <circle cx="380" cy="112" r="6" fill="#f97316" opacity="0.5"  />
+  <line x1="80"  y1="110" x2="130" y2="118" stroke="#3b82f6" strokeWidth="1.2" opacity="0.5" />
+  <line x1="130" y1="118" x2="170" y2="105" stroke="#6b7280" strokeWidth="1.2" opacity="0.35" />
+  <line x1="310" y1="106" x2="380" y2="112" stroke="#6b7280" strokeWidth="1.2" opacity="0.35" />
+
+  {/* Layer 0 — dense row of small nodes */}
+  {[55,80,105,125,145,165,185,205,225,245,265,285,305,325,345,365,385,405,430,455].map((x, i) => (
+    <circle key={i} cx={x} cy={210} r={4} fill={["#3b82f6","#3b82f6","#3b82f6","#8b5cf6","#8b5cf6","#ec4899","#ec4899","#ec4899","#9ca3af","#10b981","#10b981","#10b981","#3b82f6","#8b5cf6","#ec4899","#f97316","#f97316","#f97316","#9ca3af","#9ca3af"][i]} opacity={0.4 + (i % 3) * 0.1} />
+  ))}
+
+  {/* Query path arrows */}
+  {/* L2: entry → finance hub */}
+  <circle cx="100" cy="36" r="9" fill="none" stroke="#3b82f6" strokeWidth="2" />
+  {/* Arrow L2 → L1 */}
+  <line x1="100" y1="43" x2="100" y2="102" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
+  {/* Arrow L1 → L0 */}
+  <line x1="100" y1="116" x2="100" y2="202" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
+  {/* Move in L0 */}
+  <line x1="100" y1="210" x2="125" y2="210" stroke="#3b82f6" strokeWidth="1.5" markerEnd="url(#arrow)" />
+
+  <defs>
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L6,3 z" fill="#3b82f6" />
+    </marker>
+  </defs>
+
+  {/* Query label */}
+  <text x="110" y="34" fontSize="9" fill="#3b82f6" fontFamily="system-ui,sans-serif">Query enters here →</text>
+
+  <text x="8" y="256" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — not a real HNSW graph.</text>
+</svg>
+
+- **Layer 2 (top, sparse):** a small fraction of all vectors, connected to long-range neighbors across the entire space. Think of these as the "highway network" — fast and coarse.
+- **Intermediate layers:** progressively more vectors with shorter-range links. The neighborhood level.
+- **Layer 0 (dense):** every vector is here. Links connect only to true local neighbors. This is where precise search happens — walking the final block.
+
+At query time the algorithm enters at the top layer, moves greedily toward the query at each layer, then descends to the next layer and refines. By the time it reaches the dense bottom layer, it has been guided to roughly the right region without checking all 60 dots — it only checks the 10–20 in the nearby corner.
+
+This is where approximation enters: a greedy walk can get stuck in a local optimum. If the graph's edges don't happen to route through the globally closest point, you get a close-but-not-closest result.
+
+### The efSearch knob
+
+HNSW has two main tuning parameters.
+
+**`M` (build-time):** the number of bidirectional edges per node. Higher M means better connectivity, higher recall, but more RAM and slower index construction. Typical values: 8–64.
+
+**`efSearch` (query-time):** the size of the candidate priority queue during search — think of it as "how aggressively to explore before settling on an answer." Raising efSearch improves recall and increases latency. The relationship is sublinear in recall gains: going from efSearch=16 to efSearch=64 might add 20 percentage points of recall; going from efSearch=128 to efSearch=256 might add zero. There is a sweet spot beyond which further exploration costs more than it gains. Most production systems tune to the efSearch value that gives 90–95% recall, then stop.
+
+The demo below makes this concrete.
+
+<AnnIndexDemo client:visible />
+
+Try query 1 ("quarterly revenue outlook") and watch the three counters as you move the slider. At efSearch=16 roughly 13 of 60 nodes are visited and 3 of 5 true results are found. At efSearch=128 all 5 are found and the work done plateaus. Sliding from efSearch=128 to efSearch=256 visits more nodes without improving results — the textbook example of diminishing returns.
+
+## IVF+PQ: narrow then approximate
+
+When HNSW's memory cost is prohibitive — the full graph requires more RAM than you have — the classic alternative combines two ideas: **partition the space** to skip most of it (Inverted File index, IVF), then **compress each vector** to reduce the cost of searching within the partition (Product Quantization, PQ).
+
+### IVF: divide and conquer
+
+Before the index accepts queries, it runs a training step (k-means clustering) on a sample of the dataset. The result: a set of cluster centroids that divide the embedding space into regions. Every stored vector is then assigned to its nearest centroid and stored in that centroid's "inverted list."
+
+The zip-code analogy is apt: to find the coffee shop nearest your current location, you don't check every shop in the country — you check the postal codes that surround you. At query time, IVF compares the query to the cluster centroids (a cheap operation: typically 256–4,096 comparisons), selects the `nprobe` closest centroids, and then searches exhaustively only within those clusters.
+
+With nlist=4,096 and nprobe=32, you're searching about 0.8% of a 10-million-vector corpus — roughly 80,000 vectors instead of 10 million.
+
+**The approximation:** if the true nearest neighbor happens to live in a centroid's cell that wasn't among the top `nprobe`, it won't be returned. This is the main recall loss in IVF. Increasing `nprobe` reduces the risk at the cost of more search time.
+
+### PQ: compress each vector to bytes
+
+Even after IVF narrows the search to 80,000 vectors, comparing 80,000 full-precision vectors — each 6,144 bytes for a 1,536-dimensional float32 vector — is expensive. Product Quantization compresses each vector from thousands of bytes to a handful.
+
+PQ works by slicing each vector into sub-vectors. Each sub-vector is replaced by a small integer code: "which of 256 representative patterns (the codebook) is this sub-vector closest to?" For a 1,536-dimensional vector split into 8 sub-vectors, the result is 8 bytes per vector instead of 6,144 — a 768× compression.
+
+Distances are then approximated using precomputed lookup tables rather than full vector arithmetic — dramatically faster. The cost: two vectors that were slightly different may encode to the same code. This lossy approximation is the source of IVF+PQ's lower recall compared to HNSW. The recall penalty is a known, bounded engineering trade-off — not random degradation.
+
+Combined, FAISS reports that an IVF+PQ index runs approximately 92× faster than a brute-force Flat index at matching recall levels, while using roughly 96% less memory. For corpora of hundreds of millions of vectors — where HNSW's graph simply does not fit in RAM — IVF+PQ is often the only viable option.
+
+## What a "vector database" actually is
+
+"Vector database" is over-mystified in product marketing and under-explained in technical writing. The reality is simpler.
+
+A vector database is an ANN index wrapped with the operational machinery needed to use it in a real application:
+
+- **Metadata store.** The index maps vectors to positions. Applications need to know which position corresponds to which document — and know attributes like owner, date, and source URL. A metadata store (typically a key-value store or relational table) provides this mapping.
+- **Filter logic.** The ability to narrow vector search with metadata predicates: "nearest to this query *and* owned by user X *and* published after 2024." See the section below on why this is harder than it looks.
+- **Persistence.** An ANN index loaded in memory doesn't survive a process restart. Production systems need snapshot management and sometimes write-ahead logging.
+- **Replication.** For read-heavy workloads, distributing the index across multiple replicas is standard, which adds consistency considerations.
+- **Hybrid scoring.** Many production systems combine vector similarity with BM25 keyword relevance. A document might rank higher because it contains exact keywords from the query even if its vector isn't the closest.
+
+"A vector database is not a magic AI database that understands your content. It is a system that answers one very specific query — 'find the K nearest vectors to this point' — very fast, with metadata filtering and persistence added on top." At small workloads (a few hundred thousand vectors, an existing PostgreSQL deployment), pgvector does everything a specialized vector database does with no additional operational dependency. Specialized systems earn their complexity at high query rates, very large corpora, or demanding filtering workloads.
+
+## Filtered search: the quiet gotcha
+
+In production, users almost never ask for "find me the 10 most semantically similar documents, period." They ask for "find me the 10 most similar documents *that I own*, *published this year*, *from the internal wiki*." Combining metadata filters with ANN search is one of the hardest operational problems in retrieval systems, and most naive implementations get it quietly wrong.
+
+There are three strategies:
+
+**Post-filter (search-then-filter).** Run ANN on the full index, retrieve more candidates than requested (say, top-20), then discard any that fail the metadata predicate. Simple to implement — but with a selective filter (only 1% of documents match), you'd need top-1000 candidates to expect 10 survivors. Many systems will silently return fewer results than requested. The correct answer may exist in the index and be the closest semantic match, but if it doesn't appear in the pre-filter ANN top-K, it is invisible.
+
+**Pre-filter (filter-then-search).** Apply the metadata predicate first — using a conventional index on the metadata columns — to produce a subset of matching document IDs. Then run ANN restricted to that subset. Correctness is guaranteed for the filter; if the filtered subset is small enough, exact search over it is trivially fast.
+
+**In-algorithm filtering.** Modify the ANN traversal itself to skip filtered-out nodes. For HNSW this is the most principled approach, but has a subtlety: the graph was built without knowing which filters would be applied. Skipping nodes during traversal can sever graph paths that would have led to the true nearest neighbor. pgvector 0.8.0 addressed this with `hnsw.iterative_scan`: when a filtered search returns too few results, the system expands the search radius iteratively until enough filter-passing results are found.
+
+**Concrete example.** Alice searches for "Q3 budget projections." Her filter: `owner = "alice" AND year = 2025`. The corpus has 2 million documents; Alice owns 200 of them.
+
+With **post-filter**: ANN runs against all 2 million vectors and returns its top 20. Of those 20, roughly one is Alice's (her 200 documents are 0.01% of the corpus). Post-filtering produces 1 result for a K=5 query. Two of Alice's most relevant documents were ranked 22nd and 31st globally — never reached.
+
+With **pre-filter**: the system first retrieves Alice's 200 document IDs, then runs exact cosine similarity against those 200 vectors. Returns the correct top 5. Latency: negligible — 200 exact comparisons is a millisecond of work.
+
+**The lesson:** for narrow filtered queries, pre-filter + exact search is frequently faster *and* always more correct than post-filter. ANN is valuable when the corpus is huge and the filter is loose; it offers no benefit when the filtered subset is already small enough for brute force.
+
+A system's unfiltered recall does not predict its filtered recall. A system benchmarked at Recall@10 = 0.95 on unfiltered queries can have Recall@10 = 0.20 on queries with high-selectivity filters. Teams typically discover this gap only after user complaints about poor results on their personal documents.
+
+## Three misconceptions to retire
+
+**"HNSW is exact."** HNSW is approximate. It uses a greedy graph traversal that can get stuck in local optima — returning a close neighbor that is not the closest. You can push `efSearch` high enough to approach 100% recall, but at that point the index degrades toward brute force. The word "navigable" in the algorithm name means "can be navigated efficiently," not "guaranteed to find the globally nearest point."
+
+**"Bigger index = better recall."** Index quality determines recall; size is a weak proxy. An HNSW index built with a low `M` parameter (sparse graph) will fail to route searches correctly regardless of corpus size. Recall is a function of tuning parameters relative to dataset characteristics — not a monotonic function of corpus size. An HNSW index tuned for 1M vectors and 95% recall may drop to 88% recall at 10M vectors without retuning, because the graph becomes more complex and greedy walks traverse more hops before getting lost.
+
+**"Vector databases are smarter than regular databases."** Vector databases answer one specific query type efficiently: nearest-neighbor by vector distance. They are not more capable than relational databases for structured queries, joins, aggregations, or transactional workloads. A vector database that doesn't support `GROUP BY` or a transaction with rollback is *less* capable than PostgreSQL for most queries — it is specialized for one task, not superior overall. This misconception is perpetuated by marketing that conflates "AI-native" with "better."
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/ann-vector-indexes.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+  When a Claude tool says "I searched 50,000 documents in a fraction of a second," it didn't really search all 50,000. It navigated a carefully pre-built graph — starting with long hops across the semantic space, zooming into the right neighborhood, and then exploring only the local area in detail. It returned results that are very likely the closest ones, but not provably so. The entire architecture rests on a bet: "the 2nd-nearest document is close enough to the 1st that missing the 1st occasionally doesn't matter." In retrieval for language models, that bet almost always pays off. The speed isn't magic — it's structure, pre-computed and carefully tuned.
+
+  This is also the chapter where a recurring pattern in this site becomes explicit. Ch 6 showed how the KV cache trades memory for avoiding redundant computation — reusing stored K/V tensors across decode steps instead of reprocessing the full prefix. ANN indexes make the same kind of trade: precompute a graph or partition structure so that query time skips most of the work. Both accept that "less work now" costs something (memory for the KV cache; graph overhead or quantization error for ANN). Recognizing this pattern — build a structure, pay in memory, save on the critical path, accept bounded inaccuracy — is the mental model that carries forward to any fast system you encounter.
 </CacheCallout>
+
+<style>{`
+  /* ── Toggle scatter diagram ──────────────────────────────── */
+  .ann-toggle-wrap {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: var(--space-3) var(--space-4);
+    margin: 1.5rem 0;
+    overflow-x: auto;
+  }
+
+  .ann-toggle-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-3);
+  }
+
+  .ann-toggle-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--color-text);
+  }
+
+  .ann-toggle-btn {
+    font-size: 0.8rem;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-accent);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--color-accent);
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .ann-toggle-btn:hover {
+    background: var(--color-accent);
+    color: white;
+  }
+
+  .ann-counter {
+    font-size: 0.8rem;
+    color: var(--color-muted);
+    font-family: var(--font-mono);
+  }
+
+  .ann-scatter-svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+  }
+
+  /* Default (exact mode): show exact lines, hide hnsw edges, show all dots equally */
+  .exact-line           { display: block; }
+  .hnsw-edge            { display: none; }
+  .dot-unvisited        { opacity: 0.35; }
+  .dot-unvisited-hr-hub { opacity: 0.35; display: block; }
+  .result-ring-exact    { opacity: 0.9; }
+
+  /* HNSW mode: hide exact lines, show hnsw edges, dim unvisited dots */
+  .ann-toggle-wrap.hnsw-mode .exact-line           { display: none; }
+  .ann-toggle-wrap.hnsw-mode .hnsw-edge            { display: block; }
+  .ann-toggle-wrap.hnsw-mode .dot-unvisited        { opacity: 0.12; }
+  /* In HNSW mode hide the HR hub's topic-colored duplicate — dot-visited takes over */
+  .ann-toggle-wrap.hnsw-mode .dot-unvisited-hr-hub { opacity: 0; }
+  /* Finance top-5 and HR hub dots go accent-colored in hnsw mode */
+  .ann-toggle-wrap.hnsw-mode .dot-visited          { opacity: 1 !important; }
+  .ann-toggle-wrap.hnsw-mode .result-ring-exact    { opacity: 0.9; }
+
+  /* ── Triangle SVG ──────────────────────────────────────── */
+  .ann-triangle-svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1.5rem 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-surface);
+    padding: 8px;
+  }
+
+  .ann-hnsw-svg {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    margin: 1.5rem 0;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    background: var(--color-bg);
+  }
+
+  .ann-table-wrap {
+    overflow-x: auto;
+    margin: 1.25rem 0;
+  }
+
+  .ann-table-wrap table {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 500px;
+  }
+
+  .ann-table-wrap th,
+  .ann-table-wrap td {
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--color-border);
+    text-align: left;
+    line-height: 1.4;
+  }
+
+  .ann-table-wrap th {
+    background: var(--color-surface);
+    font-weight: 600;
+  }
+`}</style>
