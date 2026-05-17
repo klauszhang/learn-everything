@@ -2,15 +2,423 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Search engines (Elasticsearch and friends)"
 chapterNumber: null
-takeaway: "Elasticsearch as the case study, the production-system survey, and a decision framework for what to actually deploy."
+takeaway: "The six universal pieces, Elasticsearch as the case study, BM25 as the baseline, and a decision framework for what to actually deploy."
 prev: "/ann-vector-indexes"
 next: "/pattern-matching"
 ---
 
+import SearchEngineChooser from '../components/SearchEngineChooser.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/search-engine-systems.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+Every search bar you have ever used is hiding the same six-part machine. The GitHub search box, the Algolia-powered docs site that finds results before you finish typing, the Elasticsearch cluster running the log infrastructure at some company you've heard of, the `WHERE name ILIKE '%foo%'` you reached for at 2 a.m. They feel like the same thing. They are not.
+
+Under the hood each of those systems made a different bet: about what queries will look like, how big the corpus will be, how often it changes, how much money you want to spend on servers, and how much operational complexity you can absorb. A system tuned for "instant typo-tolerant autocomplete on 500K products" is a different machine than one tuned for "find the 14 log lines in 8 TB of events from 90 days ago that have this error code." Same user experience. Completely different architecture.
+
+## The six universal pieces
+
+Every search engine — regardless of how it markets itself — is built from the same six components. They trade these off differently; that is how they compete.
+
+**Ingest pipeline.** The path from a raw document (a JSON blob, a PDF, a log line) to indexed form. It normalizes encoding, extracts fields, runs text through an *analyzer* (char filters → tokenizer → token filters), and hands the result to the indexer. Getting the ingest pipeline right matters more than any query-time tuning. Garbage in, garbage out.
+
+**Persistent index.** The data structure that makes search fast. For full-text engines, this is an *inverted index* — a dictionary of analyzed tokens → document lists. For vector engines, it is an ANN graph (HNSW, IVF). The inverted index's key property: lookup time is proportional to the number of matching documents, not the total corpus size. That is why full-text search can scan a billion documents and return in milliseconds when the query is selective.
+
+**Query pipeline.** The path from a user query string to an execution plan. Parse the query into an AST, decide which index entries to look up, apply the same analyzer that ran at ingest time (usually), score each candidate. This is where the "relevance engineering" work lives.
+
+**Scoring layer.** After candidate documents are retrieved, they need an order. BM25 is the lexical default. Dot product or cosine similarity is the vector default. Cross-encoder neural rerankers are the expensive-but-accurate optional third layer. Production systems increasingly combine all three: cheap lexical + vector retrieval for recall, reranker for precision.
+
+**Coordinator / cluster manager.** A distributed engine needs something to route queries to the right shards, fan out to replicas, merge partial results, and manage shard assignment. Elasticsearch calls this the cluster manager node. Single-binary engines like Meilisearch and Typesense have no coordinator because there is no cluster — that simplicity is part of their value proposition.
+
+**API surface.** How the outside world talks to the engine. Elasticsearch uses a JSON-over-HTTP query DSL. Typesense and Meilisearch expose simpler REST APIs. Tantivy is a Rust library with no network API at all. Postgres exposes SQL. The API shapes the development experience more than any other single factor. A team that already knows SQL will find pgvector + tsvector productive immediately; the same team faces a steep learning curve with the Elasticsearch query DSL.
+
+---
+
+## Elasticsearch as the case study
+
+Elasticsearch is the industry's most-documented production search engine. It is the right anchor for a deep dive because understanding it well tells you what every other system is optimizing against.
+
+The mental model that matters: **Elasticsearch is a coordinator that runs one Lucene index per shard.** A cluster with five primary shards and one replica each has ten Lucene instances scattered across nodes. When you query, the coordinator fans the request out to all relevant shards, collects partial results, merges them by score, and returns the top N. Each shard is a Lucene index managed by a JVM process.
+
+This architecture has a critical implication: Elasticsearch is as fast as Lucene per shard, and adds network and merge latency on top. For small corpora where you don't need multiple shards, Elasticsearch's overhead is non-trivial. For large corpora where you do, it is the only thing keeping response times in milliseconds.
+
+### The analyzer pipeline
+
+An Elasticsearch analyzer is a three-stage text-processing pipeline applied at index time and, usually, at query time.
+
+**Stage 1 — Character filters.** Strip HTML tags, replace characters (`&` → `and`), normalize Unicode. Run before the tokenizer sees any text.
+
+**Stage 2 — Tokenizer.** Splits the character-filtered text into tokens. The `standard` tokenizer splits on whitespace and most punctuation. The `edge_ngram` tokenizer produces prefixes of each token (useful for autocomplete).
+
+**Stage 3 — Token filters.** Applied to each token: `lowercase` ("FOX" → "fox"), `stop` (remove "the", "a", "is"), `stemmer` ("foxes" → "fox", "running" → "run"), `synonym` (expand "car" to also index "automobile").
+
+**Worked example: "Quick brown FOXES, jumping!"**
+
+<div class="analyzer-trace">
+  <div class="analyzer-row">
+    <span class="analyzer-stage">Raw input</span>
+    <span class="analyzer-tokens"><span class="token-pill">Quick</span><span class="token-pill">brown</span><span class="token-pill">FOXES,</span><span class="token-pill">jumping!</span></span>
+    <span class="analyzer-note">Punctuation still attached; casing preserved</span>
+  </div>
+  <div class="analyzer-row">
+    <span class="analyzer-stage">After tokenizer</span>
+    <span class="analyzer-tokens"><span class="token-pill">Quick</span><span class="token-pill">brown</span><span class="token-pill">FOXES</span><span class="token-pill">jumping</span></span>
+    <span class="analyzer-note">Comma and <code>!</code> discarded by standard tokenizer</span>
+  </div>
+  <div class="analyzer-row">
+    <span class="analyzer-stage">After lowercase</span>
+    <span class="analyzer-tokens"><span class="token-pill">quick</span><span class="token-pill">brown</span><span class="token-pill">foxes</span><span class="token-pill">jumping</span></span>
+    <span class="analyzer-note">All tokens lowercased</span>
+  </div>
+  <div class="analyzer-row">
+    <span class="analyzer-stage">After stop words</span>
+    <span class="analyzer-tokens"><span class="token-pill">quick</span><span class="token-pill">brown</span><span class="token-pill">foxes</span><span class="token-pill">jumping</span></span>
+    <span class="analyzer-note">"quick" and "brown" both survive the English stopword list</span>
+  </div>
+  <div class="analyzer-row analyzer-row--final">
+    <span class="analyzer-stage">After English stemmer</span>
+    <span class="analyzer-tokens"><span class="token-pill token-pill--final">quick</span><span class="token-pill token-pill--final">brown</span><span class="token-pill token-pill--final">fox</span><span class="token-pill token-pill--final">jump</span></span>
+    <span class="analyzer-note">"foxes" → "fox"; "jumping" → "jump"</span>
+  </div>
+</div>
+
+The same analyzer must run at index time and query time. A query for "fox" gets stemmed to "fox" — matches the stored token. A query for "foxes" also gets stemmed to "fox" — also matches. If you deploy the same index *without* the stemmer, "fox" ≠ "foxes" and the match fails. This is the single most common source of "why isn't my search finding obvious results" bugs.
+
+### BM25 as the strong baseline
+
+Elasticsearch's default scoring algorithm is BM25 (Best Match 25), formalized in the 1990s and still the correct starting point in 2026. The intuition, without formulas:
+
+- **Term frequency (TF, saturating).** "fox" appearing five times in a document is stronger evidence of relevance than once. But BM25 saturates this — the 10th occurrence adds far less signal than the 2nd. This prevents keyword-stuffed documents from dominating.
+- **Inverse document frequency (IDF).** "the" appears in almost every document — finding it in a document tells you nothing about relevance. "Quetzal" appears in very few — finding it is strong evidence. Rare terms score higher; common terms score lower.
+- **Field-length normalization (b parameter).** A short document where "fox" occupies 10% of the text is a stronger match than a long document where "fox" appears once in 10,000 words. The `b` parameter controls how aggressively to normalize; `b=0` disables it (good for titles), `b=1` applies full normalization (good for long prose).
+
+A minimal Elasticsearch `bool` query that illustrates the right pattern:
+
+```json
+{
+  "query": {
+    "bool": {
+      "must":   { "match": { "body": "quick brown fox" } },
+      "filter": [
+        { "term":  { "status": "published" } },
+        { "range": { "published_at": { "gte": "2025-01-01" } } }
+      ],
+      "should":   { "term": { "category": "wildlife" } },
+      "must_not": { "term": { "deleted": true } }
+    }
+  }
+}
+```
+
+The `filter` array demonstrates the single most important performance knob: put all non-scoring criteria (status, date range, categories) in `filter`, not `must`. Filter results are cached as bitsets at the shard level; `must` clauses are not.
+
+### Sharding is forever — the most consequential pre-commit decision
+
+The number of primary shards in an Elasticsearch index is set at index creation time and **cannot be changed without reindexing**. Pick poorly and the only fix is building a new index in parallel and swapping an alias.
+
+Too few shards: one node holds all the data and you cannot scale out. Too many shards: each shard consumes heap and file handles; the coordinator overhead grows; GC pressure increases; per-shard overhead can dominate query latency for small result sets. The rough guidance is 10–50 GB per shard, but this is community-reported and depends heavily on query shape, hardware, and Elasticsearch version. Verify with your actual workload.
+
+The practical advice: decide the shard count based on the corpus size you expect in 12–18 months, not today. A new index on a live cluster (build in parallel → alias swap) is a well-understood pattern, but it is a day of engineering you would rather not spend.
+
+### The license/fork story in 2026
+
+In 2021, Elasticsearch moved from Apache 2.0 to a dual license: Elastic License v2 (ELv2) and SSPL. Neither is recognized as open source by the OSI; both restrict cloud providers from offering the software as a managed service without Elastic's commercial license.
+
+In 2024, Elastic added AGPLv3 as a third option — a genuine OSI-approved open source license. The default distribution remains ELv2.
+
+AWS forked Elasticsearch at the last Apache 2.0 version (7.10.2) in 2021, creating **OpenSearch** under Apache 2.0. OpenSearch has no restrictions on managed services. Since the fork, the two projects have diverged: Elastic's AI features (ELSER, neural ranking, GenAI integrations) have no direct OpenSearch equivalent. Feature-for-feature parity is no longer assumed.
+
+**Practical 2026 implications:** if you run Elasticsearch for your own applications, ELv2 is fine. If you build a managed search service for others, you need Elastic's commercial license or you use OpenSearch. If you want a permissive license you can embed anywhere, OpenSearch (Apache 2.0) or Elasticsearch under AGPLv3 (which requires open-sourcing modifications if you distribute).
+
+---
+
+## The ten-system landscape
+
+Ten systems occupy distinct positions in the search space. They are surveyed briefly here; the `SearchEngineChooser` below places them in context.
+
+**Elasticsearch / OpenSearch.** The Lucene giants. Best for 10M–1B+ documents with complex ranking, multi-tenant indexes, and rich aggregations. High operational overhead.
+
+**Tantivy.** A Lucene-inspired full-text search *library* in Rust — not a server. The engine inside Quickwit and ParadeDB. Excellent BM25 quality, MIT license, zero network overhead. Right choice when you are building in Rust and want to link search in directly.
+
+**Quickwit.** Built on Tantivy; object storage (S3, MinIO) as the primary tier instead of local SSD. Sub-second queries on terabytes, 80–90% storage cost reduction vs. Elasticsearch at equivalent scale. Accepts slightly higher ingest latency in exchange. The right answer for logs and traces at TB/PB scale.
+
+**Meilisearch.** Single binary, no external dependencies, sub-50ms responses, built-in typo tolerance with seven configurable ranking rules. Developer-experience first. Strong for small-to-medium corpora (under ~10M documents) where instant search UI is the primary requirement. Offers a cloud-hosted tier.
+
+**Typesense.** Occupies nearly the same niche as Meilisearch: instant, typo-tolerant, faceted search for product catalogs and documentation sites. v30.2 as of the docs surveyed. Both Meilisearch and Typesense are frequently compared and the right choice depends on specific feature details — verify at each project's current docs.
+
+**Algolia.** Hosted SaaS, no self-hosting option. Proprietary but excellent out-of-the-box quality: opinionated-but-good relevance, strong merchandising tools, AI-powered reranking. The right choice when ops time is more expensive than search subscription fees. Cost scales per operation; verify current pricing before committing at scale.
+
+**Postgres tsvector + pgvector.** Already deployed. `tsvector` + GIN for full-text search; `pgvector` for semantic search; `pg_trgm` for fuzzy name matching. Covers 80% of real search requirements without a single new service to deploy. The correct first move for any team already running Postgres on a corpus under ~10M documents.
+
+**ParadeDB.** Wraps Tantivy as a Postgres index type (`pg_search`) and integrates pgvector. Lucene-quality BM25 and vector search inside one Postgres database. Avoids Elasticsearch cluster complexity for teams that want to stay Postgres-native. Feature status — verify at paradedb.com; the project was active at the time of this writing but primary-source docs were unavailable during research.
+
+**Qdrant / Weaviate (vector-native hybrids).** Start from a vector/semantic requirement and add BM25 without a second system. Qdrant (Rust, Apache 2.0) supports sparse + dense hybrid retrieval. Weaviate (Go, BSD-3) has built-in BM25 hybrid with configurable weighting and strong multi-tenancy. Right choice when the primary access pattern is semantic and keyword is secondary.
+
+---
+
+## Decision framework
+
+The framework from the research dossier, condensed to four steps. **This is the chapter payoff**: corpus size × query shape × ops appetite → a defensible recommendation in five minutes.
+
+### Step 1 — Corpus size
+
+| Scale | If on Postgres | If starting fresh |
+|---|---|---|
+| < 100K docs | tsvector + pg_trgm + pgvector. Stop. | Meilisearch or Typesense |
+| 100K – 10M | ParadeDB or tsvector + pgvector | Meilisearch, Typesense, or Qdrant/Weaviate |
+| 10M+, logs/TB | — | Quickwit |
+| 10M+, no-ops | — | Algolia |
+| 10M+, complex | Elasticsearch or OpenSearch | Elasticsearch or OpenSearch |
+
+### Step 2 — Query shape modifiers
+
+- **Fuzzy / typo tolerance.** Meilisearch or Typesense have the best out-of-the-box typo tolerance. `pg_trgm` works well for fuzzy name matching in Postgres. Elasticsearch requires explicit ngram analyzer configuration.
+- **Semantic / vector.** Add `pgvector` (Postgres-native) or Qdrant/Weaviate at larger scale. See `/vector-search` and `/ann-vector-indexes`.
+- **Mixed keyword + semantic.** Hybrid retrieval: BM25 + vector + RRF merge. Start with RRF; tune only if you have labeled evaluation data. All of Elasticsearch, Weaviate, Meilisearch, and ParadeDB support this natively or with light configuration.
+- **Logs / event patterns.** Elasticsearch EQL, OpenSearch, or Quickwit. Quickwit for long retention on object storage.
+
+### Step 3 — Operational appetite
+
+- **Zero ops.** Algolia (hosted) or Meilisearch Cloud / Typesense Cloud. Alternatively: Postgres-only stack on a managed Postgres service — zero new systems.
+- **Some ops.** Meilisearch or Typesense self-hosted (single binary, clear docs). ParadeDB if Postgres-native.
+- **Full ops team.** Elasticsearch or OpenSearch. Budget for shard sizing decisions before data arrives, heap configuration, merge policy tuning, ILM.
+- **Strict data residency.** Self-hosted only. Eliminate Algolia and Pinecone, which are hosted-only.
+
+### Escape hatches in order
+
+1. **Postgres if you can.** Covers 80% of real search requirements with zero new services.
+2. **Single-binary / hosted when Postgres limitations are hit.** Typically at multi-digit millions of documents or when instant typo-tolerant autocomplete becomes a hard requirement.
+3. **Elasticsearch family when you outgrow both.** Multiple shards, complex ranking, high-QPS at 100M+ documents, or the full Elastic observability stack.
+
+Do not pre-optimize. Starting with Elasticsearch for a 10K-document catalog is an anti-pattern. The operational overhead is real and ongoing.
+
+---
+
+## Decision flowchart
+
+<div class="decision-tree">
+  <div class="dt-root dt-node">Start: what is your corpus size?</div>
+  <div class="dt-branches">
+    <div class="dt-branch">
+      <div class="dt-edge dt-edge--left">Under 100K docs</div>
+      <div class="dt-node dt-node--q">Already on Postgres?</div>
+      <div class="dt-branches dt-branches--small">
+        <div class="dt-branch">
+          <div class="dt-edge">Yes</div>
+          <div class="dt-node dt-node--rec">tsvector + pg_trgm + pgvector</div>
+        </div>
+        <div class="dt-branch">
+          <div class="dt-edge">No</div>
+          <div class="dt-node dt-node--rec">Meilisearch or Typesense</div>
+        </div>
+      </div>
+    </div>
+    <div class="dt-branch">
+      <div class="dt-edge">100K – 10M docs</div>
+      <div class="dt-node dt-node--q">Already on Postgres?</div>
+      <div class="dt-branches dt-branches--small">
+        <div class="dt-branch">
+          <div class="dt-edge">Yes</div>
+          <div class="dt-node dt-node--rec">ParadeDB or tsvector + pgvector</div>
+        </div>
+        <div class="dt-branch">
+          <div class="dt-edge">No</div>
+          <div class="dt-node dt-node--rec">Meilisearch / Typesense / Qdrant</div>
+        </div>
+      </div>
+    </div>
+    <div class="dt-branch">
+      <div class="dt-edge dt-edge--right">10M+ docs</div>
+      <div class="dt-node dt-node--q">Primary workload?</div>
+      <div class="dt-branches dt-branches--small">
+        <div class="dt-branch">
+          <div class="dt-edge">Logs / TB scale</div>
+          <div class="dt-node dt-node--rec">Quickwit</div>
+        </div>
+        <div class="dt-branch">
+          <div class="dt-edge">No-ops SaaS</div>
+          <div class="dt-node dt-node--rec">Algolia</div>
+        </div>
+        <div class="dt-branch">
+          <div class="dt-edge">Complex ranking</div>
+          <div class="dt-node dt-node--rec">Elasticsearch / OpenSearch</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="dt-modifiers">
+    <div class="dt-modifier">+ Fuzzy/typo → Meilisearch, Typesense, or pg_trgm</div>
+    <div class="dt-modifier">+ Semantic → add pgvector, Qdrant, or Weaviate</div>
+    <div class="dt-modifier">+ Mixed keyword+semantic → add RRF hybrid retrieval</div>
+    <div class="dt-modifier">+ Data residency → self-host only; eliminate Algolia, Pinecone</div>
+  </div>
+</div>
+
+---
+
+## Three misconceptions
+
+### "Elasticsearch is a database"
+
+Elasticsearch is not a general-purpose database. It does not offer ACID transactions. It does not guarantee exactly-once writes. Documents have no foreign keys. Aggregations are approximate at large shard counts by default (unless `shard_size` is tuned). The segment model means newly indexed documents are invisible until the next refresh (default: 1 second). These are deliberate design decisions for a system optimized for search and analytics throughput — they are not bugs. The misconception causes real production problems when teams use Elasticsearch as a system of record and then discover that a crashed node during a bulk ingest left partial data with no transactional rollback.
+
+The right mental model: Elasticsearch is an excellent *read-optimized analytics and search store* that can accept high write throughput. It is the wrong choice as your authoritative data store. Keep authoritative records in Postgres or another ACID system; sync to Elasticsearch for search.
+
+### "BM25 is obsolete because of embeddings"
+
+BM25 is not obsolete. In 2026, the production consensus for RAG, knowledge-base search, and e-commerce search is *hybrid retrieval* — BM25 lexical retrieval combined with dense vector retrieval, merged via Reciprocal Rank Fusion (RRF). BM25 is the lexical half of that hybrid. It remains the best tool for exact keyword matching, structured filters, phrase search, and any query where the user knows the precise terminology. Dense embeddings handle the cases BM25 cannot: synonym expansion, semantic intent, queries where the user and the document share no common tokens. The two are complementary. A system that uses only embeddings misses obvious exact-match cases; a system that uses only BM25 misses semantic queries. The production winner combines both.
+
+### "Shard count is a tuning knob"
+
+Shard count is not a tuning knob you adjust after the fact. It is a permanent commitment made at index creation. The common misconception — that you can add shards later to scale — is wrong for primary shards. You can add replicas at any time (which scales read throughput). You can scale individual shard nodes to larger machines. But adding primary shards requires a full reindex: build a new index with the target shard count in parallel, then swap the alias. On a multi-billion-document corpus this is a multi-day operation. Plan shard count for 12–18 months of expected growth, not for today's corpus size.
+
+---
+
+## Interactive chooser
+
+Answer four questions about your situation. The chooser highlights the recommended system(s) from the comparison table.
+
+<SearchEngineChooser client:visible />
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/search-engine-systems.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+Search systems sit directly behind MCP tools and RAG pipelines that feed Claude Code. When a tool call triggers a search, the retrieved chunks are per-query results — different every time, cannot be cached across requests.
+
+The architecture that makes this economically viable is the one described in [RAG](/rag): place a stable knowledge bundle (the documents that don't change) early in the prompt, within the cached prefix. Per-query retrieved chunks land in the per-query mutable portion, after the last cache breakpoint. Claude never re-processes the stable bundle; only the fresh chunks and the new user message incur full input pricing.
+
+This is not an accident of the RAG pattern — it is *why* the stable knowledge bundle pattern from `/rag` is cache-friendly. The search system retrieves 3–5 fresh chunks per query; the model re-uses its cached understanding of the 10,000 stable tokens it already processed. Without the prompt cache, every turn re-processes the full prefix from scratch. With the cache, the search overhead is cheap and the LLM cost scales with the mutable part of the context, not the entire conversation history.
+
 </CacheCallout>
+
+<style>{`
+  /* Analyzer pipeline trace */
+  .analyzer-trace {
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: var(--radius, 6px);
+    overflow: hidden;
+    margin: 1.5rem 0;
+    font-size: 0.875rem;
+  }
+  .analyzer-row {
+    display: grid;
+    grid-template-columns: 10rem 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+    padding: 0.625rem 0.875rem;
+    border-bottom: 1px solid var(--color-border, #f3f4f6);
+    background: white;
+  }
+  .analyzer-row:last-child { border-bottom: none; }
+  .analyzer-row--final {
+    background: #f0fdf4;
+  }
+  .analyzer-stage {
+    font-weight: 600;
+    color: var(--color-text-muted, #6b7280);
+    font-size: 0.78rem;
+    padding-top: 0.125rem;
+    white-space: nowrap;
+  }
+  .analyzer-tokens {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+  .token-pill {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    background: var(--color-accent-soft, #eff6ff);
+    border: 1px solid var(--color-accent, #3b82f6);
+    border-radius: 3px;
+    font-family: monospace;
+    font-size: 0.82rem;
+    color: var(--color-accent, #1d4ed8);
+  }
+  .token-pill--final {
+    background: #d1fae5;
+    border-color: #10b981;
+    color: #065f46;
+  }
+  .analyzer-note {
+    color: var(--color-text-muted, #9ca3af);
+    font-size: 0.78rem;
+    font-style: italic;
+    line-height: 1.5;
+  }
+
+  /* Decision tree */
+  .decision-tree {
+    background: var(--color-surface, #f9fafb);
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: var(--radius, 6px);
+    padding: 1.5rem 1rem;
+    margin: 1.5rem 0;
+    font-size: 0.85rem;
+    overflow-x: auto;
+  }
+  .dt-root {
+    text-align: center;
+    margin-bottom: 1rem;
+  }
+  .dt-node {
+    display: inline-block;
+    padding: 0.35rem 0.75rem;
+    background: white;
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 4px;
+    text-align: center;
+  }
+  .dt-node--q {
+    border-color: var(--color-accent, #3b82f6);
+    background: var(--color-accent-soft, #eff6ff);
+    color: var(--color-accent, #1d4ed8);
+    font-weight: 600;
+  }
+  .dt-node--rec {
+    background: #f0fdf4;
+    border-color: #10b981;
+    color: #065f46;
+    font-weight: 600;
+  }
+  .dt-branches {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin: 0.5rem 0;
+  }
+  .dt-branches--small {
+    gap: 0.5rem;
+  }
+  .dt-branch {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 9rem;
+  }
+  .dt-edge {
+    font-size: 0.75rem;
+    color: var(--color-text-muted, #6b7280);
+    font-style: italic;
+    padding: 0.1rem 0.5rem;
+    background: white;
+    border: 1px solid var(--color-border, #e5e7eb);
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+  .dt-edge--left { }
+  .dt-edge--right { }
+  .dt-modifiers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-top: 1rem;
+    justify-content: center;
+  }
+  .dt-modifier {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.78rem;
+    color: #92400e;
+  }
+`}</style>
