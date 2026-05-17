@@ -7,10 +7,239 @@ prev: "/data-search"
 next: "/sampling"
 ---
 
+import IndexQueryMatch from '../components/IndexQueryMatch.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/indexing-strategies.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+Every index is a tax you pay on writes for a discount on reads. The art is paying the tax only for the discounts you will actually use.
+
+## The fundamental tradeoff
+
+A database index is a sorted data structure stored separately from the table. The engine consults it to find rows without reading every row — exactly like flipping to the back of a textbook. But a book index never needs updating. A database index does: every `INSERT`, `UPDATE`, and `DELETE` must update every relevant index on that table.
+
+The three costs that come with every index, without exception:
+
+- **Slower writes.** A table with ten indexes pays ten times the index-maintenance cost per write. Each write may require reading a B-tree page into cache, modifying it, and writing it back.
+- **Space.** A B-tree index is often 10–30% the size of the table data it covers. A covering index with many included columns can exceed the table size.
+- **RAM.** Hot indexes compete with table data for buffer cache. More indexes means more evictions and more disk reads for everything.
+
+The corollary that trips up most teams: adding an index never makes the prompted query worse. But it can make everything else measurably worse. A write-heavy table with 15 indexes can spend more time updating indexes than writing data.
+
+### The cost triangle
+
+The diagram below plots four index strategies against the three-way tradeoff. No index configuration wins on all three axes — every choice is a position, not an optimum.
+
+<style>{`
+  .cost-triangle-wrap {
+    margin: 1.5rem 0;
+    max-width: 520px;
+  }
+  .cost-triangle-wrap svg {
+    width: 100%;
+    height: auto;
+    display: block;
+  }
+`}</style>
+
+<div class="cost-triangle-wrap">
+<svg viewBox="0 0 440 370" aria-label="Cost triangle: read speed vs write speed vs space. Four index strategies are plotted inside the triangle.">
+  {/* Triangle */}
+  <polygon points="220,24 30,330 410,330" fill="#f8f9fa" stroke="#d1d5db" strokeWidth="1.5"/>
+
+  {/* Corner labels */}
+  <text x="220" y="16" textAnchor="middle" fontSize="12" fontWeight="700" fill="#1a1a1a">Read speed</text>
+  <text x="10" y="348" textAnchor="start"  fontSize="12" fontWeight="700" fill="#1a1a1a">Write speed</text>
+  <text x="430" y="348" textAnchor="end"   fontSize="12" fontWeight="700" fill="#1a1a1a">Space</text>
+
+  {/* Subtitle */}
+  <text x="220" y="358" textAnchor="middle" fontSize="10" fill="#9ca3af">Closer to a corner = stronger on that axis</text>
+
+  {/* ── Data points ── */}
+
+  {/* 1. Minimal index (single-col B-tree) — balanced, slight read advantage */}
+  <circle cx="220" cy="175" r="9" fill="#3b82f6" opacity="0.85"/>
+  <text x="230" y="162" fontSize="11" fill="#1d4ed8" fontWeight="600">Single-col B-tree</text>
+  <text x="230" y="174" fontSize="10" fill="#4b5563">balanced tradeoff</text>
+
+  {/* 2. Fat covering index — great reads, poor write speed, uses space */}
+  <circle cx="305" cy="255" r="9" fill="#7c3aed" opacity="0.85"/>
+  <text x="315" y="242" fontSize="11" fill="#6d28d9" fontWeight="600">Fat covering index</text>
+  <text x="315" y="254" fontSize="10" fill="#4b5563">read↑ space↑ write↓</text>
+
+  {/* 3. Partial index — small, fast writes, selective reads */}
+  <circle cx="155" cy="258" r="9" fill="#059669" opacity="0.85"/>
+  <text x="100" y="248" fontSize="11" fill="#047857" fontWeight="600">Partial index</text>
+  <text x="100" y="260" fontSize="10" fill="#4b5563">space↓ write cost↓</text>
+
+  {/* 4. LSM-based store (no B-tree index) — write-optimized */}
+  <circle cx="90" cy="305" r="9" fill="#d97706" opacity="0.85"/>
+  <text x="100" y="292" fontSize="11" fill="#92400e" fontWeight="600">LSM store</text>
+  <text x="100" y="304" fontSize="10" fill="#4b5563">write-optimized</text>
+
+  {/* Legend note */}
+  <text x="10" y="20" fontSize="10" fill="#9ca3af">Illustrative — exact positions are qualitative.</text>
+</svg>
+</div>
+
+## Composite indexes and the leftmost-prefix rule
+
+A single-column index on `country` helps queries that filter by country. An index on `city` helps queries that filter by city. But if your most common query is `WHERE country = 'US' AND city = 'Austin'`, neither single-column index is as efficient as a composite index — and the column order determines whether it helps at all.
+
+### How a composite index is physically stored
+
+An index on `(country, city)` is stored sorted first by country, then by city within each country. The engine can scan a range in `country` and then narrow within that range by `city`. Think of a phone book sorted by last name then first name: you can look up all "Smiths" instantly, but finding everyone named "John" requires scanning the whole book — the first name isn't sorted globally.
+
+**The leftmost-prefix rule:** an index on `(a, b, c)` can serve queries filtering on `a`, `(a, b)`, or `(a, b, c)`. It cannot efficiently serve queries filtering only on `b`, only on `c`, or only on `(b, c)`.
+
+### A concrete example: `(country, city)` vs `(city, country)`
+
+```sql
+-- Index A: sorted by country first, then city within each country
+CREATE INDEX idx_a ON users (country, city);
+
+-- Index B: sorted by city first, then country within each city
+CREATE INDEX idx_b ON users (city, country);
+```
+
+| Query | Index A usable? | Index B usable? |
+|---|---|---|
+| `WHERE country = 'US'` | Yes — country is the leftmost column | No — city must lead |
+| `WHERE city = 'Austin'` | No — city is not the leftmost column | Yes — city is the leftmost column |
+| `WHERE country = 'US' AND city = 'Austin'` | Yes — both columns in order | Yes (partially) — city leads, country narrows |
+
+If 90% of your queries filter by `country` and occasionally also `city`, use `(country, city)`. If 90% filter by `city` alone, reverse it. Query frequency matters more than cardinality in most real decisions.
+
+### Range conditions break the composite rule
+
+An important extension: range conditions stop the composite index from being usable for subsequent columns. An index on `(country, created_at, status)` with a query `WHERE country = 'US' AND created_at > '2025-01-01' AND status = 'active'` will use `country` (equality) and `created_at` (range), but cannot use `status`. After a range condition, subsequent columns are no longer sorted in a useful way for the query. This is a common composite-index design trap.
+
+## Covering / included columns
+
+A standard index lookup works in two steps: (1) search the index to find matching row IDs, (2) fetch the actual rows from the table. Step 2 is often the expensive part — each row might be on a different disk page, causing random I/O.
+
+A **covering index** skips step 2 entirely. If every column the query needs is stored in the index, the engine never touches the table at all.
+
+```sql
+-- Without covering: index finds rows, heap fetches email from each row
+CREATE INDEX idx_users_country ON users (country);
+
+-- With covering: index stores email alongside country — zero heap fetches
+CREATE INDEX idx_users_country_cov ON users (country)
+  INCLUDE (email);
+
+-- Query hits the covering index with Index Only Scan
+SELECT email FROM users WHERE country = 'US';
+```
+
+The `INCLUDE` clause (Postgres, SQL Server) adds "payload" columns that aren't part of the sort key but ride along in the index leaf pages, enabling index-only scans for queries that read those columns filtered by the indexed column.
+
+Add covered columns when: the query runs millions of times per day and the column is small (an ID, a status flag, an email string). Skip it when: the column is large, the query is infrequent, or the index is already large. Covered columns inflate index size, which has its own cache and I/O cost.
+
+## Clustered vs non-clustered
+
+**Non-clustered (heap + index) — Postgres default.** Table rows live in a heap: an unordered pile of pages. Indexes are separate B-trees storing `(key, physical_row_address)` pairs. A highly selective query (returning a handful of rows) is fast. A moderately selective query (1% of a large table) can be slower than a full sequential scan because each row might be on a different heap page.
+
+**Clustered (index-organized table) — MySQL InnoDB default.** The table rows are stored inside the primary-key B-tree — the index *is* the table. A range query on the primary key reads contiguous pages: efficient. But secondary indexes store the primary key (not a physical address) as the pointer, so a secondary-index lookup does two B-tree traversals: once in the secondary index, then again in the primary-key tree for each matched row. In MySQL InnoDB, queries that primarily use secondary indexes can be slower than equivalent Postgres queries on heap tables.
+
+A practical consequence for InnoDB: pick a monotonically increasing primary key (`AUTO_INCREMENT INT`, `BIGINT`, or a ULID) rather than a UUID. A UUID-keyed InnoDB table causes every `INSERT` to land on a random disk page, causing page splits, fragmentation, and heavy write amplification.
+
+## Partial / filtered indexes
+
+A partial index includes only the rows matching a `WHERE` predicate.
+
+```sql
+-- Index only active users — 5% of the table, 5% the size
+CREATE INDEX idx_users_active ON users (email)
+WHERE status = 'active';
+```
+
+Suppose your `users` table has 500 million rows and 95% have `status = 'inactive'`. An index on all users is enormous and mostly useless since nearly all queries look for active users. A partial index on `WHERE status = 'active'` covers the 25 million active users — 5% the size, faster to build, faster to search, cheaper to maintain.
+
+The constraint: to use a partial index, the query's `WHERE` clause must logically imply the index predicate. `WHERE status = 'active' AND email LIKE 'a%'` implies `status = 'active'`, so the index is eligible. `WHERE email LIKE 'a%'` alone does not — the index won't be used.
+
+Partial indexes also have a maintenance advantage: they only need updating when a row's `status` changes to or from `'active'`. If 99% of your writes touch inactive users, the active-user index is barely touched.
+
+## Expression / functional indexes
+
+An expression index is built on the output of a function applied to one or more columns.
+
+```sql
+-- Case-insensitive email lookup
+CREATE INDEX idx_users_email_lower ON users (LOWER(email));
+```
+
+The crucial constraint: **the query must use the exact same expression** for the index to be used. `WHERE LOWER(email) = 'alice@example.com'` hits the index above. `WHERE email = 'alice@example.com'` does not — those are different expressions.
+
+This is the most common expression-index surprise: you create `INDEX(LOWER(email))`, all your app queries use `WHERE email = ?` with mixed-case inputs, and the index is never used. You must change the query or normalize the data at write time.
+
+## B-tree vs LSM-tree
+
+### B-tree: update in place
+
+A B-tree (the default in Postgres, SQLite, MySQL InnoDB) stores data in a balanced tree of pages. When a new key is inserted, the engine finds the right leaf page and writes the entry into it. The read path is clean: O(log N) page reads. B-trees perform well for read-heavy workloads with moderate writes, especially range queries.
+
+The weakness: on write-heavy workloads with random keys, page splits and fragmentation accumulate. Each "logical" write may trigger multiple physical page writes — **write amplification**.
+
+### LSM-tree: append-only, merge later
+
+An LSM-tree (Log-Structured Merge-tree) takes a different bet. Writes never touch old data. New data lands in an in-memory buffer (the memtable). When the buffer fills, it's flushed as an immutable sorted file (SSTable) to disk — a sequential write, fast on any storage. In the background, a compaction process merges SSTables from level L into level L+1, maintaining sorted order and discarding old versions of keys.
+
+The write path is always sequential — low write amplification at write time. The read path may now require checking multiple SSTables — **read amplification**. Bloom filters per SSTable cut this dramatically: before scanning an SSTable, the engine checks the filter — if the key definitely isn't there, skip the whole file.
+
+**This is a workload bet, not a generational improvement.** B-trees are not obsolete on SSDs — SSDs actually reduce the random-read penalty that was B-trees' main weakness, making indexes *more* useful on SSDs. LSM-trees exist because some workloads (log ingestion, IoT sensor data, clickstream recording) are write-heavy enough that B-tree maintenance saturates I/O.
+
+| Workload | Preferred engine |
+|---|---|
+| Read-heavy, range queries | B-tree (Postgres, SQLite, MySQL InnoDB) |
+| Write-heavy, point lookups | LSM-tree (RocksDB, Cassandra) |
+| Time-series, append-only | LSM-tree or columnar |
+| Mixed OLTP | B-tree, with tuning |
+
+## When indexes hurt
+
+### Small tables
+
+If a table has 500 rows and fits in a few disk pages, the engine reads the whole thing in one or two I/Os. An index lookup requires traversing the B-tree (2–3 pages) plus fetching the result row — possibly more I/O than the scan. Postgres's query planner will choose a sequential scan on small tables regardless of what indexes exist. Below a few thousand rows, indexes rarely help.
+
+### Write-heavy workloads
+
+A table receiving 50,000 inserts per second with 8 indexes pays 8× the index-maintenance cost per insert. For log ingestion, clickstream recording, or IoT sensor data, this can saturate I/O and CPU with index maintenance rather than actual data storage.
+
+### Queries that don't match the index
+
+An index on `(country, city)` does not help `WHERE city = 'Austin'` (leftmost-prefix rule). An expression index on `LOWER(email)` does not help `WHERE email = 'Alice@example.com'`. A partial index on `WHERE status = 'active'` does not help `WHERE status = 'inactive'`. In all these cases you're paying write-time maintenance with zero read-time benefit.
+
+## Why the planner ignores your index
+
+You added an index. The query is still slow. `EXPLAIN ANALYZE` shows `Seq Scan`. What happened?
+
+The query planner is a cost-based optimizer. It estimates the cost of several execution plans and picks the cheapest estimate. It uses statistics, not your intent.
+
+**Stale statistics.** The planner estimates row counts using `pg_statistic`, populated by `ANALYZE`. If your table has grown 10× since the last `ANALYZE`, the planner underestimates how selective your index would be, decides seq scan is cheaper, and you pay the penalty. Fix: `ANALYZE table_name`.
+
+**High selectivity mismatch.** If `WHERE country = 'US'` returns 40% of the table, the planner is right to choose a sequential scan. Fetching 40% of rows via an index means 40% of the table's page count in random I/Os — almost always worse. This is correct behavior, not a bug.
+
+**Expression mismatch.** `WHERE email = 'alice@example.com'` does not use `INDEX(LOWER(email))`. Always confirm the query uses the exact expression form.
+
+## Three misconceptions worth naming
+
+**"More indexes = faster."** Faster reads for queries that match — slower everything else. An index that no query uses is pure maintenance cost: it slows writes, wastes space, and occupies RAM.
+
+**"`INDEX(a)`, `INDEX(b)`, `INDEX(c)` is the same as `INDEX(a,b,c)`."** Very much not. Three separate indexes can filter on one column each. The composite can filter on the combination far more efficiently for multi-column `WHERE` clauses. The optimizer might combine them with a bitmap index scan, but this is slower than a well-designed composite. This trips up nearly everyone exactly once.
+
+**"Adding an index never hurts."** Wrong on small tables (seq scan is faster). Wrong on write-heavy paths (maintenance overwhelms benefit). Wrong when the query doesn't match the index (zero read benefit, positive write cost). The costs are invisible — no slow query gets worse because you removed an unused index — which is why unused indexes accumulate silently for months.
+
+The practical discipline: add indexes in response to measured slow queries, not in anticipation of hypothetical ones. Audit with `SELECT * FROM pg_stat_user_indexes WHERE idx_scan = 0` and drop indexes that have never been used since the last stats reset.
+
+## Demo: would this index be used?
+
+Pick an index definition and a query. The demo evaluates the leftmost-prefix rule and expression-match rule, then shows whether the index would be used and why.
+
+<IndexQueryMatch client:visible />
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/indexing-strategies.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+Chapter 7 describes Claude Code's prompt cache: a feature that persists prefix computation across separate API requests. Conceptually, the prompt cache is an **exact-prefix index** on conversation state — given the first N tokens of the current request, return the cached KV activations rather than recomputing them. The "search key" is the token prefix; the "stored value" is the intermediate computation. The cache hit condition (exact token-level match up to a breakpoint) is analogous to a hash-index equality check — fast and exact, with zero tolerance for mismatch.
+
+The same write-time-tax-for-read-time-discount tradeoff applies directly. Cache writes cost more than uncached input; cache reads cost much less. Changing a single early token — or reordering segments — invalidates the entire cached prefix downstream, just as an expression mismatch makes an expression index useless. The art is the same: pay the write tax only for the prefixes you will actually reuse.
+
 </CacheCallout>
