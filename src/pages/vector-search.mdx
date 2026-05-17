@@ -2,13 +2,170 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Vector search"
 chapterNumber: null
-takeaway: "Embeddings are not just labels — they are addresses in a high-dimensional space you can search by distance."
+takeaway: "Retrieval embeddings map a whole sentence to one direction in space — a different object from the per-token embeddings Ch 2 introduced — and semantic search finds which document directions point closest to your query direction."
 prev: "/07-prompt-cache"
 next: "/rag"
 ---
 
+import VectorSearchDemo from '../components/VectorSearchDemo.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-Chapter content coming soon — see `docs/research/vector-embeddings-and-semantic-search.md` for the research dossier driving this chapter.
+## First: two things that share a name
 
-<CacheCallout label="Chapter takeaway">Placeholder — to be written.</CacheCallout>
+Ch 2 introduced **embedding-layer embeddings**: the model looks up each token ID in a fixed table and retrieves a vector. Token 4721 (`"king"`) always returns the same 12,288-dimensional row — no context, no history, just a table read. That vector then feeds into the first attention layer, where it immediately begins mixing with neighboring tokens.
+
+**Retrieval embeddings are a completely different object.** A separate, purpose-built model — called an *embedding model* — reads your entire query or document all at once and collapses it into *one* vector. That single vector represents the meaning of the whole text, not any individual token. It has a different size (commonly 1,024 dimensions, not 12,288), a different purpose (similarity search, not attention input), and a different lifetime (you can store it in a database and query it months later).
+
+<div class="vs-table-wrap">
+| Property | Ch 2: per-token embedding | This chapter: retrieval embedding |
+|---|---|---|
+| Produced by | The main LLM at inference time | A separate, dedicated embedding model |
+| Granularity | One token | One sentence / chunk / document |
+| Size (typical) | 4,096–12,288 dims | 256–2,048 dims |
+| Lives in | Temporary inference buffers | A vector database or index |
+| Consumer | The next attention layer | A nearest-neighbor search |
+</div>
+
+When you read about "embeddings" in the context of search and retrieval, this is the kind they mean. Same word, different object.
+
+## Meaning as direction
+
+The embedding model reads your text — say, "What happens if I cancel my subscription?" — and produces a list of numbers, one per dimension. Texts that carry similar meanings end up with similar lists. More precisely, their vectors *point in the same direction* in that high-dimensional space.
+
+That "same direction" is what cosine similarity measures. Given two vectors **A** and **B**:
+
+```
+cosine_similarity(A, B) = (A · B) / (|A| × |B|)
+```
+
+The denominator removes magnitude — it doesn't matter if one vector has bigger numbers than the other, only the *angle* between them matters. A score of 1.0 means identical direction, 0.0 means perpendicular (unrelated), and -1.0 means opposite.
+
+In practice, most production embedding models return L2-normalized vectors — every vector has magnitude 1, so the denominator is always `1 × 1 = 1`. Cosine similarity collapses to a plain dot product, which is faster to compute and gives identical results. The demo below uses that shortcut.
+
+## The retrieval loop
+
+There are two phases:
+
+**Offline (build the index).** For each document chunk, call the embedding model to get a vector. Store each `{chunk, vector}` pair. This runs once and is re-done when documents change.
+
+**Online (answer a query).** Embed the query, then find the K chunks whose vectors are closest to the query vector. Return those chunks — typically as context for a language model. At scale, finding nearest neighbors uses clever indexes that avoid comparing against every document; covered in a deeper-dive chapter later.
+
+The query step is fast — milliseconds. The LLM reasoning over the retrieved chunks is the bottleneck, not the retrieval.
+
+## Interactive demo
+
+The scatter below places 12 illustrative document chunks in 2D. Each cluster represents a topic. Select a query to see where it lands and which documents are retrieved as the top-3 nearest neighbors. The blue cosine scores are computed from 8-dimensional hand-authored vectors — illustrative, not real model output.
+
+<VectorSearchDemo client:load />
+
+## Where dense retrieval fails — and why you should know
+
+Three misconceptions are worth heading off before you rely on semantic search in production.
+
+**"The embedding understands the text."** It doesn't, in any meaningful sense. The embedding model has learned which texts appear in similar training contexts. It encodes those statistical patterns as directions in space. It cannot fact-check, catch contradictions, or reason about logic. Two sentences that say the *opposite* of each other may embed nearly identically because they share the same vocabulary and topic structure: "The drug has no side effects" and "The drug has serious side effects" are both sentences about drug side effects — their vectors may be very close.
+
+**"Cosine score ≥ 0.8 means the result is relevant."** Scores are model- and domain-specific. A general-purpose model might place completely unrelated sentences at 0.7, while a domain-tuned model might place genuinely similar sentences at 0.5. There is no universal threshold. What works reliably is *relative ranking* — take the top K results from your model on your data — not absolute cutoffs. Validate on your own corpus before trusting a number.
+
+**"Dense embeddings always beat keyword search."** For natural-language paraphrase — where your query uses different words than the document — dense retrieval wins. But for rare or specialized terms (`TypeError: cannot unpack non-iterable NoneType object`), precise numbers (`$4.2 million` vs. `$42 million`), and verbatim quotes, keyword search (BM25) is more reliable. Embeddings compress meaning, and numerical precision is the first casualty. Most production systems run both in parallel and merge the results. Don't throw away keyword search.
+
+## The geometry in one picture
+
+The static diagram below summarizes the spatial intuition: related documents cluster together, and a query lands near its relevant cluster regardless of the exact words it uses. The query "stop paying?" lands near the legal cluster containing "Account termination" — zero word overlap, high cosine similarity.
+
+{/* Inline SVG — static cluster overview */}
+<svg
+  viewBox="0 0 480 300"
+  width="480"
+  height="300"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-label="Illustrative 2D retrieval embedding space: five topic clusters with a query marker near the legal cluster"
+  style={{ display: "block", maxWidth: "100%", margin: "1.5rem 0", border: "1px solid var(--color-border)", borderRadius: "var(--radius)", background: "var(--color-surface)" }}
+>
+  {/* Cluster backgrounds */}
+  <ellipse cx="105" cy="95"  rx="65" ry="45" fill="#6366f1" opacity="0.08" />
+  <ellipse cx="385" cy="170" rx="58" ry="50" fill="#10b981" opacity="0.08" />
+  <ellipse cx="385" cy="75"  rx="52" ry="38" fill="#f97316" opacity="0.08" />
+  <ellipse cx="105" cy="220" rx="60" ry="38" fill="#8b5cf6" opacity="0.08" />
+  <ellipse cx="240" cy="240" rx="52" ry="35" fill="#ec4899" opacity="0.08" />
+
+  {/* Cluster labels */}
+  <text x="105" y="42"  textAnchor="middle" fontSize="11" fill="#6366f1" opacity="0.8" fontFamily="system-ui,sans-serif">Legal</text>
+  <text x="385" y="115" textAnchor="middle" fontSize="11" fill="#10b981" opacity="0.8" fontFamily="system-ui,sans-serif">Code</text>
+  <text x="385" y="30"  textAnchor="middle" fontSize="11" fill="#f97316" opacity="0.8" fontFamily="system-ui,sans-serif">Biology</text>
+  <text x="105" y="175" textAnchor="middle" fontSize="11" fill="#8b5cf6" opacity="0.8" fontFamily="system-ui,sans-serif">Finance</text>
+  <text x="240" y="198" textAnchor="middle" fontSize="11" fill="#ec4899" opacity="0.8" fontFamily="system-ui,sans-serif">HR</text>
+
+  {/* Legal docs */}
+  <circle cx="88"  cy="90"  r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="88"  y="78"   textAnchor="middle" fontSize="10" fill="#3730a3" fontFamily="system-ui,sans-serif">Account termination</text>
+  <circle cx="122" cy="102" r="7" fill="#6366f1" opacity="0.85" />
+  <text   x="140" y="117"  textAnchor="middle" fontSize="10" fill="#3730a3" fontFamily="system-ui,sans-serif">Late payment</text>
+  <circle cx="96"  cy="120" r="7" fill="#6366f1" opacity="0.85" />
+
+  {/* Code docs */}
+  <circle cx="368" cy="172" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="368" y="160"  textAnchor="middle" fontSize="10" fill="#065f46" fontFamily="system-ui,sans-serif">NPE error</text>
+  <circle cx="402" cy="162" r="7" fill="#10b981" opacity="0.85" />
+  <circle cx="380" cy="195" r="7" fill="#10b981" opacity="0.85" />
+  <text   x="398" y="210"  textAnchor="middle" fontSize="10" fill="#065f46" fontFamily="system-ui,sans-serif">bun install</text>
+
+  {/* Biology docs */}
+  <circle cx="370" cy="78"  r="7" fill="#f97316" opacity="0.85" />
+  <text   x="370" y="66"   textAnchor="middle" fontSize="10" fill="#9a3412" fontFamily="system-ui,sans-serif">Photosynthesis</text>
+  <circle cx="404" cy="88"  r="7" fill="#f97316" opacity="0.85" />
+
+  {/* Finance docs */}
+  <circle cx="95"  cy="220" r="7" fill="#8b5cf6" opacity="0.85" />
+  <text   x="95"  y="208"  textAnchor="middle" fontSize="10" fill="#4c1d95" fontFamily="system-ui,sans-serif">Q3 revenue</text>
+  <circle cx="122" cy="232" r="7" fill="#8b5cf6" opacity="0.85" />
+
+  {/* HR docs */}
+  <circle cx="225" cy="242" r="7" fill="#ec4899" opacity="0.85" />
+  <text   x="225" y="230"  textAnchor="middle" fontSize="10" fill="#9d174d" fontFamily="system-ui,sans-serif">PTO policy</text>
+  <circle cx="258" cy="234" r="7" fill="#ec4899" opacity="0.85" />
+
+  {/* Query marker */}
+  <circle cx="105" cy="52" r="10" fill="#3b82f6" stroke="white" strokeWidth="2" />
+  <text   x="105" y="56"  textAnchor="middle" fontSize="9" fill="white" fontWeight="700" fontFamily="system-ui,sans-serif">Q</text>
+  <text   x="105" y="28"  textAnchor="middle" fontSize="10" fill="#1d4ed8" fontWeight="600" fontFamily="system-ui,sans-serif">"stop paying?"</text>
+  {/* Dashed lines to top docs */}
+  <line x1="105" y1="62" x2="88"  y2="83"  stroke="#3b82f6" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.7" />
+  <line x1="105" y1="62" x2="122" y2="95"  stroke="#60a5fa" strokeWidth="1.5" strokeDasharray="4 3" opacity="0.5" />
+
+  {/* Axis labels */}
+  <text x="240" y="290" textAnchor="middle" fontSize="9" fill="#9ca3af" fontFamily="system-ui,sans-serif">Dimension 1 (illustrative)</text>
+  <text x="12"  y="150" textAnchor="middle" fontSize="9" fill="#9ca3af" fontFamily="system-ui,sans-serif" transform="rotate(-90,12,150)">Dimension 2</text>
+
+  <text x="8" y="298" fontSize="8" fill="#9ca3af" fontFamily="system-ui,sans-serif">Illustrative — 2D hand-authored layout, not real model output.</text>
+</svg>
+
+Zero word overlap between "stop paying?" and "Account termination." The geometry closes that gap.
+
+<CacheCallout label="Chapter takeaway">
+  Most of what feels like magic in Claude-powered products — file search, knowledge bases, document Q&A — is just this vector lookup running *before* the model ever processes a single token of your question. The model's reasoning is real, but it can only work with what ends up in its context window. Retrieval is how the right text gets there.
+
+  This is also the first step of **RAG (Retrieval-Augmented Generation)**: embed the query, retrieve the nearest chunks, inject them into the prompt, then generate. The next chapter builds the full pipeline. The quality of the retrieval step determines what the model sees — if the right chunk is not retrieved, the answer will be wrong even if the model reasons perfectly over whatever it did receive.
+</CacheCallout>
+
+<style>{`
+  .vs-table-wrap {
+    overflow-x: auto;
+    margin: 1.25rem 0;
+  }
+  .vs-table-wrap table {
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    min-width: 480px;
+  }
+  .vs-table-wrap th,
+  .vs-table-wrap td {
+    padding: 0.4rem 0.75rem;
+    border: 1px solid var(--color-border);
+    text-align: left;
+    line-height: 1.4;
+  }
+  .vs-table-wrap th {
+    background: var(--color-surface);
+    font-weight: 600;
+  }
+`}</style>
