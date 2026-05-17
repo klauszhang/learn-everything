@@ -1,14 +1,359 @@
 ---
 layout: ../layouts/ChapterLayout.astro
-title: "RAG"
+title: "RAG — Retrieval-Augmented Generation"
 chapterNumber: null
-takeaway: "Retrieval-augmented generation answers questions about content the model was never trained on — by searching first and generating second."
+takeaway: "RAG grounds model answers in your documents by searching first and generating second — and how you assemble the prompt after retrieval determines both answer quality and prompt-cache efficiency."
 prev: "/vector-search"
 next: ""
 ---
 
+import RagDemo from '../components/RagDemo.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-Chapter content coming soon — see `docs/research/rag.md` for the research dossier driving this chapter.
+<style>{`
+  /* ---- End-to-end pipeline diagram ---- */
+  .rag-pipeline {
+    margin: 28px 0 8px;
+    overflow-x: auto;
+  }
+  .rag-phase {
+    margin-bottom: 20px;
+  }
+  .rag-phase-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: #6b7280;
+    margin-bottom: 8px;
+    padding-left: 4px;
+  }
+  .rag-phase-label.offline { color: #6366f1; }
+  .rag-phase-label.online  { color: #0891b2; }
+  .rag-flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    flex-wrap: nowrap;
+    min-width: 600px;
+  }
+  .rag-node {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-align: center;
+    line-height: 1.35;
+    color: #1f2937;
+    min-width: 88px;
+    flex-shrink: 0;
+  }
+  .rag-node sub {
+    font-size: 0.6rem;
+    font-weight: 400;
+    color: #6b7280;
+    margin-top: 3px;
+    display: block;
+  }
+  .rag-arrow {
+    font-size: 1rem;
+    color: #9ca3af;
+    flex-shrink: 0;
+    padding: 0 4px;
+    user-select: none;
+  }
+  /* Offline nodes */
+  .node-corpus   { background: #ede9fe; border: 1.5px solid #a78bfa; }
+  .node-chunk    { background: #ddd6fe; border: 1.5px solid #7c3aed; }
+  .node-embed    { background: #ede9fe; border: 1.5px solid #a78bfa; }
+  .node-index    { background: #ddd6fe; border: 1.5px solid #7c3aed; }
+  /* Online nodes */
+  .node-question { background: #e0f2fe; border: 1.5px solid #38bdf8; }
+  .node-retrieve { background: #bae6fd; border: 1.5px solid #0ea5e9; }
+  /* Prompt assembly — echoes Ch 7 anatomy: amber = cached, grey = uncached */
+  .node-assemble {
+    background: #fffbeb;
+    border: 2px solid #f59e0b;
+    min-width: 120px;
+    padding: 10px 10px;
+  }
+  .assemble-segs {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    width: 100%;
+    margin-top: 5px;
+  }
+  .assemble-seg {
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 0.62rem;
+    font-weight: 500;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .seg-cached   { background: #fef3c7; color: #92400e; border-left: 3px solid #f59e0b; }
+  .seg-uncached { background: #f1f5f9; color: #475569; border-left: 3px solid #94a3b8; }
+  .node-answer  { background: #dcfce7; border: 1.5px solid #4ade80; }
+  /* Connector line between offline & online phases */
+  .rag-phase-connector {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.72rem;
+    color: #9ca3af;
+    padding: 4px 0 12px 4px;
+    font-style: italic;
+  }
+  .rag-pipeline-legend {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+    color: #6b7280;
+    margin-top: 8px;
+  }
+  .rag-pipeline-legend span {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .legend-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+  }
+  /* ---- Failure mode list ---- */
+  .failure-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0;
+  }
+  .failure-item {
+    background: #fef2f2;
+    border: 1.5px solid #fca5a5;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 0.85rem;
+    line-height: 1.6;
+  }
+  .failure-item strong {
+    color: #b91c1c;
+  }
+  /* ---- Misconception callouts ---- */
+  .misconception {
+    background: #fff7ed;
+    border: 1.5px solid #fdba74;
+    border-left-width: 4px;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 14px 0;
+    font-size: 0.86rem;
+    line-height: 1.6;
+  }
+  .misconception-label {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: #c2410c;
+    margin-bottom: 5px;
+  }
+`}</style>
 
-<CacheCallout label="Chapter takeaway">Placeholder — to be written.</CacheCallout>
+## The magic trick — and how it works
+
+Imagine a colleague who has read everything published before their knowledge cutoff — but nothing since. They sometimes confabulate a confident answer when they can't quite remember. Now imagine a second colleague who can sprint to the filing cabinet on your behalf, pull the three most relevant pages, and hand them to the first colleague before they answer. That is RAG: **find relevant text first, then generate from it.**
+
+From a user's perspective the effect feels surprising: "the model can suddenly answer questions about my company's internal wiki without retraining." What's actually happening is a search step you don't see. A vector index — built from that same wiki — finds the paragraphs most likely to answer your question. Those paragraphs are injected into the prompt. The model reads them like a person reads a quote before replying. If retrieval is good, the answer is good. If retrieval misses, the model improvises — and that is where RAG fails.
+
+RAG is not magic. It shifts the quality problem from "what did the model memorize?" to "how good is my retrieval?" Both halves matter equally.
+
+---
+
+## Why RAG exists: four converging problems
+
+### Stale training data
+
+Language models have a knowledge cutoff: a date after which they know nothing. A model trained through late 2024 cannot tell you what your organization shipped in 2025. RAG sidesteps this by pulling from a live or regularly-updated document store — the model's weights don't change; only the documents do.
+
+The honest caveat: the index can go stale too. RAG pushes the freshness problem from model weights to your document ingestion pipeline.
+
+### Hallucination when knowledge is absent
+
+When a model doesn't know something, it rarely says "I don't know." It generates a fluent, confident-sounding answer from statistical pattern-matching. RAG reduces hallucination by giving the model something true to anchor on. If the retrieved chunk directly answers the question, the model follows it. If it doesn't, the model may still hallucinate — but now there is a source document to check against.
+
+### Fine-tuning is expensive and slow
+
+The alternative to RAG is fine-tuning: retraining the model on your private data. Fine-tuning changes the model's weights — GPU cluster, thousands of dollars, a new deployment, a pipeline that re-runs every time your knowledge base changes. Iteration cycles are days or weeks.
+
+RAG changes documents, not weights. A new document can be retrievable in seconds. Fine-tuning cannot match that iteration speed. (Fine-tuning and RAG are complementary: fine-tuning makes the model *reason* in a domain-specific way; RAG puts specific information in context. They solve different problems.)
+
+### Context windows are large, but not the answer
+
+As of 2026, Claude supports a context window of up to 200,000 tokens. But stuffing an entire knowledge base into every request isn't a solution: every input token is billed, time-to-first-token scales with prefill length, and model attention over very early content degrades at extreme lengths. RAG uses a smaller, targeted context — the chunks that actually matter — rather than the entire corpus. And as the closing section of this chapter explains, this also has important implications for what can and cannot benefit from the prompt cache.
+
+---
+
+## The end-to-end loop
+
+RAG splits cleanly into two phases: **INDEX** (offline, happens once per document) and **QUERY** (online, happens once per user request). The boundary matters because the index is built slowly and carefully; the query must return in milliseconds.
+
+<div class="rag-pipeline" role="img" aria-label="RAG pipeline: offline index phase (corpus to vector index) and online query phase (question to answer via retrieval and prompt assembly)">
+  <div class="rag-phase">
+    <div class="rag-phase-label offline">Offline — INDEX phase (build once)</div>
+    <div class="rag-flow">
+      <div class="rag-node node-corpus">Corpus<sub>raw docs</sub></div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-chunk">Chunking<sub>split &amp; prep</sub></div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-embed">Embed<sub>chunk → vector</sub></div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-index">Vector index<sub>+ optional BM25</sub></div>
+    </div>
+  </div>
+  <div class="rag-phase-connector">↕ shared index — queries at runtime</div>
+  <div class="rag-phase">
+    <div class="rag-phase-label online">Online — QUERY phase (per request)</div>
+    <div class="rag-flow">
+      <div class="rag-node node-question">Question<sub>user input</sub></div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-retrieve">Top-K chunks<sub>retrieve &amp; rerank</sub></div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-assemble">
+        Prompt assembly
+        <div class="assemble-segs">
+          <div class="assemble-seg seg-cached">System prompt ✦ cached</div>
+          <div class="assemble-seg seg-cached">Stable docs ✦ cached</div>
+          <div class="assemble-seg seg-uncached">Retrieved chunks</div>
+          <div class="assemble-seg seg-uncached">User question</div>
+        </div>
+      </div>
+      <div class="rag-arrow">→</div>
+      <div class="rag-node node-answer">Answer<sub>grounded</sub></div>
+    </div>
+  </div>
+  <div class="rag-pipeline-legend">
+    <span><span class="legend-swatch" style="background:#fef3c7;border:1.5px solid #f59e0b;"></span> Amber = cached stable segments (Ch 7 cache-semantic color)</span>
+    <span><span class="legend-swatch" style="background:#f1f5f9;border:1.5px solid #94a3b8;"></span> Grey = per-query, uncached</span>
+    <span><span class="legend-swatch" style="background:#ddd6fe;border:1.5px solid #7c3aed;"></span> Offline index nodes</span>
+    <span><span class="legend-swatch" style="background:#bae6fd;border:1.5px solid #0ea5e9;"></span> Online query nodes</span>
+  </div>
+</div>
+
+Notice the prompt-assembly node. Its segments are stacked exactly as in Ch 7's anatomy diagram: system prompt and stable documents are amber — cached across requests — while retrieved chunks and the user question are grey — per-query and uncached. We will return to this in the closing section.
+
+The index phase is slow and offline; the query phase is fast and online. This asymmetry is intentional. You can afford expensive preprocessing at index time — running a model to generate contextual blurbs, building multiple indexes for hybrid retrieval — because those costs are amortized across every query ever served. At query time, every millisecond counts.
+
+---
+
+## Chunking — the unsexy thing that matters most
+
+Retrieval can only surface what indexing captures. Chunking determines what gets indexed. It is the most impactful and most underestimated decision in a RAG system.
+
+The core tension: **chunks too small** lose context (a sentence like "it was discontinued in 2019" is meaningless without knowing what "it" refers to); **chunks too large** bury the relevant signal in noise and push the model to ignore most of the text.
+
+**Fixed-size chunking** splits every N tokens, with optional overlap between adjacent chunks. Simple to implement, works acceptably for homogenous prose — but frequently splits sentences and paragraphs mid-thought. Fine as a baseline; almost always beatable.
+
+**Semantic / recursive chunking** splits on document-aware boundaries: try paragraphs first, then sentences, then words, only reducing granularity when a unit exceeds the target size. Preserves sentence and paragraph coherence. The default in most open-source RAG libraries.
+
+**Hierarchical (parent-child) chunking** indexes small chunks (individual paragraphs) for retrieval precision, then retrieves their parent (the full section) as model context. The granular chunk is easy to match; the parent provides coherence. Higher recall without context loss, but more complex to implement.
+
+**Contextual Retrieval — the Anthropic-blessed pattern.** Before embedding each chunk, a model prepends a short (50–100 token) context blurb explaining what the chunk is about in the context of its source document. A chunk like "Revenue grew by 3% year-over-year" becomes "From Acme Corp's Q3 2024 earnings report (the quarter ending September 2024): Revenue grew by 3% year-over-year." The contextualized version produces a much more specific vector. [Anthropic's research](https://www.anthropic.com/research/contextual-retrieval) shows this reduces retrieval failure rates by 35% with contextual embeddings alone, 49% combined with BM25, and 67% when reranking is added — compared to a plain-embeddings baseline with a 5.7% failure rate.
+
+---
+
+## Retrieval beyond pure vector search
+
+The vector similarity search from the previous chapter is a strong baseline. In practice, layering additional signals consistently improves quality.
+
+**Hybrid retrieval (dense + BM25):** runs both a vector index and a keyword (BM25) index, merges the ranked results. Dense retrieval generalizes across meaning; BM25 is literal — it catches exact phrase matches that embeddings can miss (proper nouns, error codes, product identifiers). Hybrid is the practical default for production.
+
+**Reranking with a cross-encoder:** takes the top-K ANN candidates and rescores them with a model that sees the query and the chunk together. ANN retrieves the top 150 candidates; the reranker returns the top 20. Services like Cohere Rerank and Voyage Rerank add ~100–200ms latency for meaningful quality gains.
+
+**Query rewriting and HyDE:** transform the user's question before embedding. Query rewriting paraphrases casual queries into the formal register of documents. HyDE generates a hypothetical document that would answer the question, then embeds that document-like text. Both add one extra model call of latency; both help when user vocabulary diverges sharply from document vocabulary.
+
+---
+
+## Interactive demo: without and with RAG
+
+Toggle between answering the same question without any retrieved context (vague, possibly wrong) and with a retrieved chunk (grounded, citable). The "Show prompt assembly" button reveals how retrieved chunks and the user question slot into the prompt — echoing Ch 7's anatomy diagram.
+
+<RagDemo client:load />
+
+---
+
+## Failure modes you will encounter in production
+
+<div class="failure-list">
+  <div class="failure-item">
+    <strong>Retrieval miss.</strong> The right information exists in the corpus, but the top-K retrieval doesn't include it. Common causes: chunk too small (relevant text spans multiple chunks; no single chunk scores well against the query), embedding vocabulary mismatch (query uses "SLA"; the document says "uptime guarantee"), or a missing metadata filter. The model improvises — and the answer is wrong.
+  </div>
+  <div class="failure-item">
+    <strong>Context dilution.</strong> With 20 retrieved chunks in the prompt, the model has a lot of material. Research consistently shows that models attend less reliably to content in the middle of long contexts. A relevant chunk at rank 12 of 20 may be effectively ignored. Mitigations: rerank to ensure best chunks rank first; limit top-K to 5–10 for most tasks.
+  </div>
+  <div class="failure-item">
+    <strong>Citation drift.</strong> The model cites a chunk that doesn't actually support the claim it's attached to. Anthropic's <a href="https://platform.claude.com/docs/en/docs/build-with-claude/citations">citations feature</a> verifies that cited text exists in the source document — but the model can still associate a claim with a real passage that doesn't quite say what the model claims it says. Programmatic spot-checking is still needed.
+  </div>
+  <div class="failure-item">
+    <strong>Stale index.</strong> Your knowledge base changed; the index didn't. A document was updated or superseded, but the old chunk still lives in the vector store. Treat the index as a data pipeline, not a one-time setup. Add a <code>last_indexed</code> timestamp to every chunk's metadata.
+  </div>
+</div>
+
+---
+
+## Common misconceptions
+
+<div class="misconception">
+  <div class="misconception-label">Misconception: "RAG fixes hallucinations"</div>
+  No. RAG <em>reduces</em> the conditions under which hallucination occurs by giving the model something true to anchor on. The model can still hallucinate a claim within a retrieved chunk, hallucinate a synthesis across chunks, or ignore chunks entirely and pattern-match from training. Think: reduces hallucination, does not prevent it.
+</div>
+
+<div class="misconception">
+  <div class="misconception-label">Misconception: "Bigger top-K is always better"</div>
+  Past a threshold (usually 10–20 chunks for most models and tasks), additional chunks contribute noise rather than signal. Retrieval recall goes up with K; downstream answer quality does not always follow. Reranking and a reasonable K cap (5–10 for most tasks) produce better results than simply retrieving more.
+</div>
+
+<div class="misconception">
+  <div class="misconception-label">Misconception: "Long context windows make RAG obsolete"</div>
+  Counter-argument is multi-pronged. <strong>Cost:</strong> a 200K-token context filled with your full knowledge base costs the same to process on every request; RAG pays for 5–20 relevant chunks per query. <strong>Latency:</strong> time-to-first-token scales with prefill length. <strong>Attention dilution:</strong> at very long contexts, model attention over early content degrades. <strong>Freshness:</strong> a long-context approach still requires manually deciding what to include; RAG retrieves dynamically. And most critically for this site: <strong>cache reuse.</strong> A stable, well-structured cached prefix preserves cache hits across turns. A 200K-token prompt filled with per-request content cannot be cached. Long contexts and RAG are complementary, not substitutes — and the prompt cache is the clearest reason why.
+</div>
+
+---
+
+## The prompt-cache interaction: the chapter's payoff
+
+Chapter 7 established one rule: **stable content early, mutable content late.** Cache breakpoints go after the stable segments. A cache hit is an exact token-level prefix match up to a breakpoint.
+
+Retrieved chunks are per-query. They differ on every request. They cannot be cached across queries. This creates a real architectural tension when designing a RAG system:
+
+**Option A — large stable knowledge bundle (cacheable).** Pre-select a fixed set of high-value documents for a given assistant and place them in the cached prefix with `cache_control: { type: "ephemeral" }`. Every request pays only for the new question and small incremental retrieval. Cost drops after the first turn. Trade-off: the fixed bundle is a guess about what's always relevant. It can be wrong, and it grows stale.
+
+**Option B — pure per-query retrieval (not cacheable).** Run retrieval fresh for every query. Maximum precision. Zero cache benefit across queries; every request pays full input-token cost for retrieved chunks.
+
+**Option C (the practical optimum) — cache a stable core, append fresh retrieval.** Cache a stable core (e.g., product documentation that rarely changes) with a cache breakpoint after it. Append per-query retrieved chunks after the breakpoint, before the question. The cached prefix is saved; the retrieved chunks are fresh per query. This matches Ch 7's anatomy exactly: system prompt + stable knowledge → cached (amber); per-query chunks + question → uncached (grey).
+
+Concretely (numbers illustrative):
+
+| Segment | Tokens | Cached? |
+|---|---|---|
+| System prompt | 800 | Yes |
+| Stable knowledge bundle (10 docs) | 8,000 | Yes |
+| Per-query retrieved chunks (5 × 300 tokens) | 1,500 | No |
+| Conversation history | 600 | No |
+| New user question | 120 | No |
+| **Total** | **11,020** | **8,800 cached** |
+
+On a cache hit: pay 8,800 tokens at cache-read rates plus 2,220 tokens at uncached input rates. The stable bundle makes the cache valuable only if it contains content likely to be relevant to every query. If the stable bundle is generic and the real answers live in per-query retrieved chunks anyway, the caching benefit shrinks — and a narrower stable bundle (or none at all) is the better design.
+
+This is the non-obvious tradeoff that flows directly from Ch 7's "stable content early" rule: a broader stable bundle maximizes cache value but reduces per-query retrieval precision. Most production RAG systems land somewhere in between — a small stable bundle of "always relevant" content plus targeted per-query retrieval for specifics.
+
+<CacheCallout label="Chapter takeaway">
+RAG adds a per-query mutable segment to every request — the retrieved chunks. These chunks cannot be cached across queries because they differ for every question. The strategy that minimizes cost: pre-load a stable knowledge bundle (your "always relevant" documents) in the cached prefix with a cache breakpoint after it, then append only the query-specific retrieved chunks fresh each turn. The stable bundle pays for itself on the second query; the per-query retrieval costs the same every time. This is the "stable content early, mutable content late" rule from Ch 7, applied to RAG specifically — and it is the clearest reason why large context windows and RAG are complementary, not competitive. A 200K-token prompt filled with per-request content cannot be cached; a well-structured RAG system with a stable cached prefix can.
+</CacheCallout>
