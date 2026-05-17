@@ -2,15 +2,277 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Tool use"
 chapterNumber: null
-takeaway: "The call → tool_result loop the model lives inside, and the schema contract that holds it together."
+takeaway: "The model never executes anything — it predicts structured text; your harness runs the real function and feeds the result back. The loop repeats until the model produces plain text."
 prev: "/sampling"
 next: "/extended-thinking"
 ---
 
+import ToolUseLoop from '../components/ToolUseLoop.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/tool-use.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+## What actually happened?
+
+Claude Code called `read_file`, then `run_tests` — and it looked like Claude reached into your filesystem and did something. It did not. Here is what actually happened.
+
+Claude's output is always text. When Claude "calls a tool," it produces a **structured blob of text** that says, in effect: "I want to invoke function `read_file` with argument `path = src/utils/email.ts`." Claude Code — your harness — parses that blob, runs the real function, and sends the result back as another message. Claude reads that message and decides what to say or do next. The loop repeats until Claude's output is ordinary text with no tool call embedded.
+
+The model never executes anything. It asks; your harness decides whether to honor the request; the result flows back as tokens. Everything the model "does" is prediction — predict the right function name, predict the right arguments, predict text once the results are in. Tool use is not a plugin system or a special execution channel. It is **pattern-matching over a schema, producing structured text, handled by a loop your harness runs**.
+
+Once you see this, the magic shrinks — and the levers you can pull come into focus.
+
+---
+
+## The control flow
+
+The fundamental loop has five steps. The loop is the central mechanic of every Claude Code session.
+
+<style>{`
+  .tool-loop-diagram {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    margin: 24px 0 32px;
+    max-width: 640px;
+  }
+  .tl-step {
+    display: flex;
+    gap: 0;
+    align-items: stretch;
+  }
+  .tl-num {
+    width: 36px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .tl-circle {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 0.78rem;
+    color: #fff;
+    flex-shrink: 0;
+    z-index: 1;
+  }
+  .tl-line {
+    width: 2px;
+    flex: 1;
+    margin: 0 auto;
+    min-height: 20px;
+  }
+  .tl-body {
+    flex: 1;
+    padding: 4px 0 20px 12px;
+  }
+  .tl-title {
+    font-weight: 700;
+    font-size: 0.85rem;
+    color: #1e293b;
+    margin-bottom: 3px;
+    line-height: 28px;
+  }
+  .tl-desc {
+    font-size: 0.8rem;
+    color: #475569;
+    line-height: 1.55;
+  }
+  .tl-branch {
+    display: inline-block;
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #92400e;
+    margin-right: 4px;
+  }
+  .tl-code {
+    font-family: ui-monospace, monospace;
+    font-size: 0.78rem;
+    background: #f1f5f9;
+    border-radius: 3px;
+    padding: 0 5px;
+    color: #0f172a;
+  }
+  .tl-back-arrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 24px 48px;
+    font-size: 0.75rem;
+    color: #6366f1;
+    font-weight: 600;
+    font-style: italic;
+  }
+  .tl-back-line {
+    flex: 1;
+    height: 0;
+    border-top: 2px dashed #6366f1;
+    max-width: 120px;
+  }
+`}</style>
+
+<div class="tool-loop-diagram" role="img" aria-label="Five-step tool use loop: harness sends message, model responds with tool_use or text, harness executes function, harness sends tool_result, model continues or finishes">
+
+  <div class="tl-step">
+    <div class="tl-num">
+      <div class="tl-circle" style="background:#3b82f6">1</div>
+      <div class="tl-line" style="background:#bfdbfe"></div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-title">Harness sends message to model</div>
+      <div class="tl-desc">Payload: system prompt + <strong>tool definitions</strong> + conversation history + user message.</div>
+    </div>
+  </div>
+
+  <div class="tl-step">
+    <div class="tl-num">
+      <div class="tl-circle" style="background:#8b5cf6">2</div>
+      <div class="tl-line" style="background:#ddd6fe"></div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-title">Model produces output</div>
+      <div class="tl-desc">
+        <span class="tl-branch">If plain text</span> go to step 5 (done).<br/>
+        <span class="tl-branch">If tool_use block</span> go to step 3.
+      </div>
+    </div>
+  </div>
+
+  <div class="tl-step">
+    <div class="tl-num">
+      <div class="tl-circle" style="background:#f59e0b">3</div>
+      <div class="tl-line" style="background:#fde68a"></div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-title">Harness receives tool_use block</div>
+      <div class="tl-desc">Extracts: tool name, arguments (a JSON object), and a unique <span class="tl-code">tool_use_id</span>. Harness runs the actual function.</div>
+    </div>
+  </div>
+
+  <div class="tl-step">
+    <div class="tl-num">
+      <div class="tl-circle" style="background:#10b981">4</div>
+      <div class="tl-line" style="background:#a7f3d0"></div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-title">Harness sends tool_result back to model</div>
+      <div class="tl-desc">References the same <span class="tl-code">tool_use_id</span> so the model knows which call this answers. On failure: content is the error; <span class="tl-code">is_error: true</span>.</div>
+    </div>
+  </div>
+
+  <div class="tl-step">
+    <div class="tl-num">
+      <div class="tl-circle" style="background:#6366f1">5</div>
+    </div>
+    <div class="tl-body">
+      <div class="tl-title">Model produces next output</div>
+      <div class="tl-desc">Can chain another tool_use block (loop back to step 3), or produce final text — done.</div>
+    </div>
+  </div>
+
+</div>
+
+<div class="tl-back-arrow">
+  <div class="tl-back-line"></div>
+  ↑ if tool_use again, loop back to step 3
+</div>
+
+The loop terminates when the API returns <code>stop_reason: "end_turn"</code>. Your harness should key its while-loop on <code>stop_reason === "tool_use"</code> — every other stop reason exits.
+
+There is no out-of-band channel. Every tool call is a turn in the conversation: one assistant message containing a `tool_use` block, followed by one user message containing a `tool_result` block. The conversation transcript carries everything.
+
+---
+
+## Step-through demo
+
+Click "Next step" to advance through a scripted six-turn session. Watch the conversation panel build on the left and the harness log annotate each turn on the right.
+
+<ToolUseLoop client:visible />
+
+---
+
+## What tools look like to the model
+
+Tool definitions are passed to the API in a top-level `tools` array. The API converts them into a special system prompt segment — **the model never sees your source code**, only the description you wrote. Each definition has three required fields:
+
+```json
+{
+  "name": "read_file",
+  "description": "Read the contents of a source file. Returns full text. Use before editing.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "path": { "type": "string", "description": "Repo-relative path." }
+    },
+    "required": ["path"]
+  }
+}
+```
+
+The `description` is the most important field. It is literally the text the model reads when deciding whether to call the tool and what arguments to pass. A vague description produces vague — or wrong — calls.
+
+The `name` must match `^[a-zA-Z0-9_-]{1,64}$`. The `input_schema` is a standard JSON Schema object.
+
+### tool_choice: controlling which tool is called
+
+| Value | Behavior |
+|---|---|
+| `auto` | Model decides whether to call a tool or respond with text. Default when tools are provided. |
+| `any` | Model must call one of the provided tools, but picks which. |
+| `{"type": "tool", "name": "X"}` | Model must call tool X specifically. |
+| `none` | Model must not call any tools. |
+
+With `any` or `tool`, the API prefills the assistant turn to force a tool call — the model will not produce a natural-language preamble even if you ask, because the mechanism is a forced prefix, not a style preference.
+
+### Parallel tool calls
+
+In a single assistant turn, the model can emit **multiple `tool_use` blocks**. Your harness can run them concurrently (`Promise.all`) or sequentially — the API does not care. What it does require: all results must come back in a **single** `user` message before the next API call. Two separate messages for two results breaks the protocol.
+
+---
+
+## Anthropic's built-in tools
+
+Anthropic publishes three tools with pre-trained schemas. Because Claude was trained on many successful trajectories with these exact signatures, it calls them more reliably than a custom tool doing the same thing. The versioned type string is the key — pass it in the `type` field and the model recognizes the schema without you writing one:
+
+- **`computer_20251124`** — screenshot + mouse/keyboard control. Requires beta header `"computer-use-2025-11-24"`. The `zoom` action (new in this version) lets Claude inspect a screen region at full resolution.
+- **`bash_20250124`** — runs a shell command, returns stdout/stderr. Your harness executes the command; Anthropic does not touch your machine.
+- **`text_editor_20250728`** — string-replace–based file editing (`view`, `create`, `str_replace`, `insert`). Claude Code uses this internally — surgical edits are more token-efficient than rewriting whole files.
+
+These three are often used together. Only `computer_20251124` requires the beta header; the other two do not.
+
+---
+
+## Three misconceptions, corrected
+
+### "The model executes code."
+
+No. The model emits structured text that looks like a function call. Your harness — not the model — runs the actual function. The model only ever reads and writes tokens. This is the same autoregressive prediction from Ch 5: given the tool definitions and conversation history, the model predicts the most likely next tokens, and those tokens happen to match a `tool_use` block format.
+
+### "JSON schema is just documentation."
+
+It is the model's **only contract with your function**. The model uses the schema to decide what arguments to pass. If your schema marks a field as optional but your function crashes on null, that is a schema lie — and the model will occasionally produce null and crash you. Keep schema and implementation in sync. For guaranteed conformance, set `strict: true` on the tool definition.
+
+### "More tools = more capability."
+
+More tools = more confusion. As the tool list grows, the model spends more attention on tool selection and makes more selection errors. Anthropic's own guidance recommends consolidating related operations into fewer tools with an `action` parameter rather than many single-purpose tools. Curate; do not accumulate.
+
+---
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/tool-use.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+In Ch 7 you saw tool definitions listed as a named segment in the prompt anatomy — sitting between the system prompt and read files, with its own cache breakpoint. Now you know what those definitions actually do.
+
+**The silent invalidator, made concrete:** tool definitions are serialized into tokens and injected into the system prompt segment before every request. A one-word change to a description — even a typo fix — produces different tokens at that position. The prefix no longer matches the cached entry. Every downstream segment — read files, conversation history, the new turn — is reprocessed from scratch. No warning, no feedback, just full cost.
+
+Tool results live in the conversation history, below the last breakpoint — they are reprocessed every turn anyway and are not a caching concern. The concern is the definitions themselves: the part that rarely changes, but when it does, blows the cache cold for the entire session.
+
+Treat tool descriptions like deployed code. Batch edits rather than making small iterative tweaks across sessions. Every description edit is a cache invalidation.
+
 </CacheCallout>
