@@ -62,7 +62,9 @@ This can cut inference cost dramatically — and speed things up for long conver
 
 That "exact token-by-token match" rule isn't arbitrary. It follows directly from how transformers process text.
 
-Over the next seven chapters, we'll build up the mental model:
+### Part I — Transformers & the cache
+
+Seven chapters that build the mental model from tokens up to the prompt cache:
 
 - **Ch 1 — Tokens:** Text gets chopped into tokens. One changed character can shift token boundaries and invalidate the cache.
 - **Ch 2 — Embeddings:** Each token maps to a fixed vector. Same token in, same vector out — at the input layer.
@@ -72,10 +74,19 @@ Over the next seven chapters, we'll build up the mental model:
 - **Ch 6 — KV cache:** The internal optimization that avoids re-processing the prefix on every generation step.
 - **Ch 7 — Prompt cache:** The product feature built on the same idea — but across separate API requests, with its own TTL, pricing, and invalidation rules.
 
-By the end, you'll know exactly what bytes are reused, what makes a cache hit, and what silently blows it cold.
+By the end of Part I you'll know exactly what bytes are reused, what makes a cache hit, and what silently blows it cold.
+
+### Part II — Beyond the cache
+
+The same audience, the same house style, but pushing into the rest of the stack you actually touch when using Claude. Each chapter ends with a takeaway that loops back to what you learned in Part I.
+
+- **Vector search:** retrieval embeddings (different object from Ch 2's input-layer embeddings), cosine geometry, what semantic search actually does — and where it quietly fails.
+- **RAG:** the retrieval-augmented loop. Why every "the model can answer questions about my docs" demo is the same five-step pipeline. Where it interacts with the prompt cache from Ch 7.
+
+More chapters in this part land as their research dossiers (under `docs/research/`) become chapters: sampling, tool use, extended thinking, long-context behavior, streaming + structured outputs, agents and agent loops, MCP, hallucination and calibration, pattern matching, data search, indexing strategies, and search engines (Elasticsearch and friends).
 
 <CacheCallout>
-Prompt caching is the reason this site exists. Every chapter connects back to this question: why does a prefix need to be <em>exactly</em> identical, token for token, for the cache to hit? The answer lives in how transformers work. Start here, and the cache behavior in Ch 7 will feel inevitable rather than arbitrary.
+Prompt caching is the reason this site exists. Every Part I chapter connects back to one question: why does a prefix need to be <em>exactly</em> identical, token for token, for the cache to hit? The answer lives in how transformers work. Part II then shows how the rest of the stack — retrieval, tools, agents, sampling — either lives inside that cached prefix or sits next to it. Start here, and the cache behavior in Ch 7 will feel inevitable rather than arbitrary.
 </CacheCallout>
 
 <style>{`

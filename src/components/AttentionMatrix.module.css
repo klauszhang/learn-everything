@@ -109,33 +109,32 @@
   white-space: nowrap;
 }
 
-/* Axis labels */
-.axisLabels {
-  display: flex;
-  justify-content: space-between;
+/* Axis caption — one line above the grid */
+.axisCaption {
   max-width: 620px;
-  margin-top: var(--space-2);
-  font-size: 0.75rem;
+  margin: 0 0 var(--space-2);
+  font-size: 0.78rem;
   color: var(--color-muted);
+  line-height: 1.45;
 }
 
-.axisY {
-  writing-mode: horizontal-tb;
-}
-
-.axisX {
-  text-align: right;
-}
-
-/* Legend */
+/* Legend — one clean line below the grid */
 .legend {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-3);
+  gap: var(--space-4);
+  row-gap: var(--space-2);
+  margin-top: var(--space-4);
+  max-width: 620px;
   font-size: 0.78rem;
   color: var(--color-muted);
   flex-wrap: wrap;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .legendSwatch {

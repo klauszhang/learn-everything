@@ -33,6 +33,9 @@ export default function AttentionMatrix() {
 
   return (
     <figure className={styles.figure}>
+      <p className={styles.axisCaption}>
+        Rows are <strong>query</strong> tokens (asking). Columns are <strong>key</strong> tokens (what's being asked about). The upper-right triangle is empty — that's the causal mask.
+      </p>
       <div className={styles.wrapper} role="group" aria-label="Attention weight matrix — illustrative">
         {/* Top-left corner spacer */}
         <div className={styles.corner} />
@@ -102,18 +105,16 @@ export default function AttentionMatrix() {
         ))}
       </div>
 
-      {/* Axis labels */}
-      <div className={styles.axisLabels}>
-        <span className={styles.axisY}>↑ Query token (row)</span>
-        <span className={styles.axisX}>Key token (column) →</span>
-      </div>
-
       {/* Legend */}
       <div className={styles.legend}>
-        <span className={styles.legendSwatch} style={{ background: "rgba(59,130,246,0.65)" }} />
-        <span>Attention weight (darker = higher)</span>
-        <span className={styles.legendMasked} />
-        <span>Masked (future tokens — causal mask)</span>
+        <span className={styles.legendItem}>
+          <span className={styles.legendSwatch} style={{ background: "rgba(59,130,246,0.65)" }} />
+          <span>Attention weight (darker = higher)</span>
+        </span>
+        <span className={styles.legendItem}>
+          <span className={styles.legendMasked} />
+          <span>Masked future tokens</span>
+        </span>
       </div>
 
       {selected !== null ? (

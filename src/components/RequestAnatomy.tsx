@@ -27,23 +27,26 @@ const SEGMENT_BORDER: Record<SegmentKind, string> = {
   "new-turn": "#cbd5e1",
 };
 
-const STATUS_STYLES: Record<CacheStatus, { bg: string; border: string; label: string; labelColor: string }> = {
+const STATUS_STYLES: Record<CacheStatus, { bg: string; border: string; label: string; longLabel: string; labelColor: string }> = {
   hit: {
     bg: "#fef3c7",        // amber-soft (--color-cache-soft)
     border: "#f59e0b",    // amber (--color-cache)
-    label: "Cache hit",
+    label: "HIT",
+    longLabel: "Cache hit",
     labelColor: "#92400e",
   },
   miss: {
     bg: "#f3f4f6",        // grey-100
     border: "#9ca3af",    // grey-400
-    label: "Cache miss",
+    label: "MISS",
+    longLabel: "Cache miss",
     labelColor: "#6b7280",
   },
   write: {
     bg: "#fef9c3",        // yellow-50
     border: "#eab308",    // yellow-500
-    label: "Cache write",
+    label: "WRITE",
+    longLabel: "Cache write",
     labelColor: "#854d0e",
   },
 };
@@ -61,18 +64,19 @@ function Tooltip({ text, visible }: TooltipProps) {
     <div
       style={{
         position: "absolute",
-        bottom: "calc(100% + 8px)",
+        top: "calc(100% + 8px)",
         left: "50%",
         transform: "translateX(-50%)",
         background: "#1a1a1a",
         color: "#f9fafb",
         padding: "6px 10px",
         borderRadius: "5px",
-        fontSize: "0.78rem",
-        lineHeight: 1.45,
+        fontSize: "0.75rem",
+        lineHeight: 1.4,
         whiteSpace: "normal",
-        width: "220px",
-        zIndex: 10,
+        width: "max-content",
+        maxWidth: "200px",
+        zIndex: 50,
         pointerEvents: "none",
         boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
       }}
@@ -119,14 +123,17 @@ function SegmentBar({
       {/* Status badge */}
       <div
         style={{
-          fontSize: "0.65rem",
+          fontSize: "0.62rem",
           fontWeight: 700,
-          textTransform: "uppercase",
-          letterSpacing: "0.06em",
+          letterSpacing: "0.04em",
           color: style.labelColor,
           marginBottom: "3px",
           whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          maxWidth: "100%",
         }}
+        title={style.longLabel}
       >
         {style.label}
       </div>
@@ -230,8 +237,9 @@ function RequestColumn({ scenario }: RequestColumnProps) {
           display: "flex",
           gap: "3px",
           alignItems: "flex-end",
-          overflowX: "auto",
           paddingBottom: "4px",
+          paddingTop: "4px",
+          overflow: "visible",
         }}
       >
         {scenario.segments.map((seg) => {
@@ -316,7 +324,7 @@ function StatusLegend() {
                 border: `2px solid ${s.border}`,
               }}
             />
-            <span style={{ color: s.labelColor, fontWeight: 600 }}>{s.label}</span>
+            <span style={{ color: s.labelColor, fontWeight: 600 }}>{s.longLabel}</span>
           </span>
         );
       })}
