@@ -2,15 +2,320 @@
 layout: ../layouts/ChapterLayout.astro
 title: "Long-context behavior"
 chapterNumber: null
-takeaway: "Capacity is not the same as effective use. The U-curve, lost-in-the-middle, and what 1M-context buys you."
+takeaway: "Fitting in the window is not the same as being used reliably from the window. Position, distractors, and cost all shape what you actually get."
 prev: "/streaming"
 next: "/agents"
 ---
 
+import NeedlePlacement from '../components/NeedlePlacement.tsx';
 import CacheCallout from '../components/CacheCallout.astro';
 
-This chapter is being written from its research dossier at `docs/research/long-context.md`. In the meantime, the dossier itself is the canonical reference — open it for the full coverage of mechanisms, misconceptions, citations, and demo plans.
+<style>{`
+  .lc-note {
+    font-size: 0.82rem;
+    color: var(--color-muted);
+    font-style: italic;
+    margin-top: 0.5rem;
+  }
+  .misconceptions-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin: var(--space-6) 0;
+  }
+  .misconception-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-6);
+    background: var(--color-surface);
+  }
+  .misconception-card .mc-myth {
+    font-weight: 700;
+    color: #b91c1c;
+    margin-bottom: var(--space-2);
+    font-size: 0.95rem;
+  }
+  .misconception-card .mc-reality {
+    font-size: 0.9rem;
+    color: var(--color-text);
+    line-height: 1.6;
+  }
+  .lc-decision-tree {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: var(--space-4) var(--space-6);
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    line-height: 1.7;
+    margin: var(--space-6) 0;
+    white-space: pre;
+    overflow-x: auto;
+  }
+`}</style>
+
+## The problem that doesn't announce itself
+
+You paste a 60-page contract into Claude. The context fits — no error. You ask about a clause on page 43. The answer is fluent, confident, and wrong.
+
+The model didn't run out of room. It had room. But having room and reliably using everything in the room are two different things, and the industry has stretched context windows much faster than it has improved what models do with them.
+
+This chapter explains the gap: why capacity is not the same as effective use, where failures concentrate, what the mechanism probably is, and how the cost story changes once the prompt cache enters the picture.
+
+---
+
+## Capacity vs. effective use
+
+"Context window" blurs two distinct quantities:
+
+**Window size (capacity)** is the maximum number of tokens the model will accept. Current Anthropic models (as of May 2026) include Claude Opus 4.7 and Claude Sonnet 4.6 with 1M-token windows, and Claude Haiku 4.5 with a 200K window. Exceeding the limit returns an error.
+
+**Effective use** is how reliably the model retrieves and integrates information placed *anywhere* in those tokens — at the start, the middle, the end. Passing the "does it fit?" test tells you nothing about whether the content will actually be used correctly.
+
+A context window is like a very large desk. You can spread a million tokens of paper across it. Whether you can reliably find any given fact on that desk — quickly, accurately, without being confused by nearby papers — is a separate question entirely.
+
+---
+
+## The degradation patterns
+
+### Lost in the Middle — the U-curve
+
+The most widely cited empirical finding is from Liu et al. (2023), "Lost in the Middle: How Language Models Use Long Contexts" (TACL, arXiv 2307.03172). When relevant information is placed at the beginning or end of a long input, retrieval accuracy is substantially higher than when the same information is placed in the middle. The pattern produces a U-shaped accuracy curve across token positions.
+
+**Important hedges on this finding:**
+- The 2023 paper tested models that are now two or more generations old. Newer models — including current Claude variants — have likely moderated the effect in magnitude. Anthropic has not published a Claude-specific recall curve at position in a form this chapter can verify.
+- The *direction* is widely replicated and expected to persist even if the magnitude has improved. Community practitioners still report position-sensitivity effects consistent with the research direction.
+- The paper tested specific task formats (multi-document QA, key-value retrieval). Other tasks may differ.
+
+**Practical implication:** if you have one specific fact the model absolutely needs — a constraint, a number, a name — placing it at the start or end of the context is more robust than burying it in the middle. This is community-observed best practice, not a guarantee.
+
+### Distractors degrade recall
+
+When irrelevant but topically similar content surrounds the target, recall of the target drops sharply. A needle surrounded by similar-looking needles is harder to find than a needle in random text.
+
+A concrete example: asking Claude to identify a specific contract clause from 20 contracts, 15 of which contain similar-but-not-identical language, performs worse than sending only the one relevant contract. Smaller context, better signal-to-noise. This is exactly the argument that motivates RAG: instead of loading all 20 contracts, retrieval surfaces the one most likely to contain the answer.
+
+*Distractor sensitivity is directionally consistent across multiple evaluations; the magnitude depends on the specific task and model.*
+
+### Multi-needle is harder than single-needle
+
+Standard needle-in-a-haystack tests (NIAH) hide one fact and ask the model to retrieve it. RULER (arXiv 2404.06654) extended this to multi-needle: hide two, three, or more distinct facts and ask for all of them. Recall degrades faster per fact as you add more. A model that retrieves a single needle at high accuracy might retrieve all three in a three-needle task at substantially lower accuracy.
+
+**Practical implication:** if you need a model to track five separate constraints scattered across a 100K-token document, consolidate those constraints into a summary near the start. Don't assume the model will track everything you scattered through the text.
+
+### Format sensitivity
+
+Asking for the same information in different ways can produce meaningfully different accuracy. This is partly a retrieval-vs-synthesis distinction and partly a symptom of how attention patterns activate. If you're not getting useful answers from a long-context session, try rephrasing: name the section explicitly, give a direct quote from the context, say "in the third paragraph of the section titled X." It's a zero-cost diagnostic before concluding the model has "forgotten" the content.
+
+---
+
+## The benchmark landscape
+
+**NIAH (Needle-in-a-Haystack):** inserts a synthetic fact at a specific position in a large filler document and tests pure retrieval of one item. Frontier models now achieve near-perfect NIAH scores — the benchmark is saturated as a discriminating test. RULER's authors explicitly note this.
+
+**RULER** (arXiv 2404.06654): extends NIAH to multi-needle, variable needle types, and multi-hop tracing. Key finding: "almost all models exhibit large performance drops as context length increases," and "only half of them can maintain satisfactory performance at 32K." This was from a 2024 paper on then-current models; current flagship models likely perform better, but have not been re-tested in a form this chapter can verify.
+
+**Lost in the Middle:** the Liu et al. evaluation described above. Most directly demonstrates the U-curve position effect, tested on 2023-era models.
+
+**Where they agree:** all sources agree that models degrade at longer contexts, that the degradation is real, and that nominal window size systematically overstates reliable effective context. A model that aces NIAH may still fail meaningfully on real multi-document reasoning at the same length.
+
+**The transparency gap:** Anthropic's model release posts cover coding, knowledge, and math benchmarks. Long-context specific recall at position — multi-needle accuracy, degradation by context length — has not been published in a primary-source form this chapter could verify as of May 2026.
+
+---
+
+## Position-based recall: the U-curve
+
+The diagram below illustrates the U-curve. Recall is higher at both ends of the context and lowest around the midpoint. The amber zone marks the mid-context danger zone.
+
+<svg
+  viewBox="0 0 560 260"
+  xmlns="http://www.w3.org/2000/svg"
+  role="img"
+  aria-label="U-curve: needle position on x-axis, illustrative recall % on y-axis. Recall is highest at start and end, lowest near the midpoint."
+  style="max-width: 560px; width: 100%; display: block; margin: 1.5rem 0;"
+>
+  <title>Illustrative recall vs. needle position — U-curve</title>
+  <desc>A smooth U-shaped curve. Recall is around 91% at the start and 92% at the end, dipping to about 55% at the midpoint. The middle 40–60% zone is shaded amber. Based on Liu et al. (2023) direction; numbers are illustrative, not from a Claude evaluation.</desc>
+
+  <rect width="560" height="260" fill="#f8f9fa" rx="6" />
+
+  {/* Amber danger-zone: x 244 to 336, y from top (30) to baseline (195) */}
+  <rect x="244" y="30" width="92" height="165" fill="#fef3c7" opacity="0.85" />
+  <text x="290" y="118" textAnchor="middle" fontSize="10" fill="#b45309" fontWeight="600">Middle</text>
+  <text x="290" y="130" textAnchor="middle" fontSize="10" fill="#b45309">danger zone</text>
+
+  {/* Grid lines */}
+  <line x1="60" y1="63"  x2="520" y2="63"  stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
+  <line x1="60" y1="129" x2="520" y2="129" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
+  <line x1="60" y1="195" x2="520" y2="195" stroke="#e5e7eb" strokeWidth="1" strokeDasharray="4,3" />
+
+  {/* Axes */}
+  <line x1="60" y1="195" x2="520" y2="195" stroke="#9ca3af" strokeWidth="1.5" />
+  <line x1="60" y1="30"  x2="60"  y2="195" stroke="#9ca3af" strokeWidth="1.5" />
+
+  {/* U-curve polyline
+      x = 60 + position * 460
+      y = 30 + (100 - recall) / 50 * 165
+  */}
+  <polyline
+    fill="none"
+    stroke="#3b82f6"
+    strokeWidth="2.5"
+    strokeLinejoin="round"
+    strokeLinecap="round"
+    points="60,60 83,66 106,76 129,89 152,109 175,129 198,146 221,159 244,169 267,175 290,179 313,172 336,162 359,146 382,126 405,103 428,86 451,73 474,63 520,56"
+  />
+
+  {/* Endpoint and nadir dots */}
+  <circle cx="60"  cy="60"  r="5" fill="#3b82f6" />
+  <circle cx="520" cy="56"  r="5" fill="#3b82f6" />
+  <circle cx="290" cy="179" r="5" fill="#d97706" />
+
+  {/* Y-axis labels */}
+  <text x="52" y="67"  textAnchor="end" fontSize="10" fill="#6b7280">90%</text>
+  <text x="52" y="133" textAnchor="end" fontSize="10" fill="#6b7280">70%</text>
+  <text x="52" y="199" textAnchor="end" fontSize="10" fill="#6b7280">50%</text>
+
+  {/* X-axis labels */}
+  <text x="60"  y="210" textAnchor="middle" fontSize="10" fill="#6b7280">0%</text>
+  <text x="175" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">25%</text>
+  <text x="290" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">50%</text>
+  <text x="405" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">75%</text>
+  <text x="520" y="210" textAnchor="middle" fontSize="10" fill="#6b7280">100%</text>
+
+  {/* Axis titles */}
+  <text x="290" y="230" textAnchor="middle" fontSize="11" fill="#6b7280">Position in context (start → end)</text>
+  <text x="16" y="115" textAnchor="middle" fontSize="11" fill="#6b7280" transform="rotate(-90,16,115)">Illustrative recall %</text>
+
+  {/* Annotations at endpoints */}
+  <text x="60"  y="50" textAnchor="middle" fontSize="9" fill="#2563eb" fontWeight="600">Start</text>
+  <text x="60"  y="42" textAnchor="middle" fontSize="9" fill="#2563eb">higher recall</text>
+  <text x="520" y="46" textAnchor="middle" fontSize="9" fill="#2563eb" fontWeight="600">End</text>
+  <text x="520" y="38" textAnchor="middle" fontSize="9" fill="#2563eb">higher recall</text>
+
+  <text x="290" y="250" textAnchor="middle" fontSize="9" fill="#9ca3af">Shape consistent with Liu et al. (2023). Numbers are illustrative — not measured on Claude.</text>
+</svg>
+
+<p className="lc-note">Illustrative diagram. The U-curve direction has been replicated qualitatively. The magnitude varies by model and task; current models may have moderated it.</p>
+
+---
+
+## Try it: place the needle
+
+Move the slider to see how position affects illustrative recall probability.
+
+<NeedlePlacement client:visible />
+
+---
+
+## Why this happens — mechanism (hedged)
+
+The following are the leading mechanistic intuitions from the research community. They are consistent with the empirical patterns above but are not proven first-principles accounts. The field actively debates their relative weight.
+
+### Attention has a finite budget
+
+In each attention layer (Ch 3), every token computes attention weights over all prior tokens. Those weights pass through a softmax — a normalization that forces all weights to sum exactly to 1.0. Attention is a *budget*: the total available to distribute across the sequence is fixed regardless of sequence length.
+
+At 1,000 tokens, each earlier token can receive up to 0.1% of the budget. At 1,000,000 tokens, that denominator grows 1,000-fold. Attention is not uniform in practice — it concentrates — but the budget intuition captures why sheer sequence length creates pressure on which tokens get attended to and which effectively disappear.
+
+### Position encoding: RoPE and YaRN
+
+Modern models use rotary position embeddings (RoPE) to encode where each token sits in the sequence. Each token's representation is "rotated" by an angle proportional to its position — nearby tokens have similar angles, distant tokens have dissimilar ones. RoPE is calibrated during training for a specific maximum sequence length. Beyond that length, tokens appear at positions the model never saw during training, and the model's ability to distinguish very distant positions degrades.
+
+**YaRN** (Yet another RoPE extensioN, arXiv 2309.00071) is a method for scaling RoPE to longer sequences with far less retraining. It rescales the angular frequencies so rotations map usefully to the extended range. Context extension in current models almost certainly involves techniques like YaRN. But extending *reach* does not guarantee that behavior at very distant positions is as reliable as at nearer ones — the extended range is partially extrapolated from shorter training.
+
+### Attention sinks
+
+Xiao et al. (2023) (StreamingLLM, arXiv 2309.17453) documented that initial tokens in a sequence receive disproportionately high attention regardless of their semantic content — even a structurally unremarkable period. These "attention sinks" absorb a share of the attention budget without contributing semantic information. This may partly explain why the very beginning of a long context is retrieved more reliably: initial positions are structurally privileged by the attention pattern, not just because they hold the most useful content.
+
+### Training-data length distribution
+
+If almost all training examples were under 10,000 tokens, the model's learned patterns for using distant context are shaped by relatively few long examples. Targeted long-context fine-tuning helps — and Anthropic and others have invested in this — but the degree to which it fully closes the gap is not publicly benchmarked in a form this chapter can verify.
+
+---
+
+## The cost story
+
+### Prefill is roughly quadratic in context length
+
+During **prefill** (processing the prompt), every token must attend to every prior token at every layer. If the prompt doubles in length, the attention computation grows roughly fourfold. A 1M-token prefill is not 10× more expensive than a 100K-token prefill — it is closer to 100× in raw FLOPs. Hardware optimizations like FlashAttention reduce the practical constant substantially but do not change the asymptotic scaling.
+
+### Decode is roughly linear via the KV cache
+
+Once prefill is done, each new generated token only needs to read the cached Keys and Values of all prior tokens (Ch 6). Each decode step costs O(N) in memory reads rather than O(N²) in compute. The KV cache grows linearly with context length — memory pressure is real at 1M tokens, but the compute saving over the naive alternative is enormous.
+
+### Prompt cache changes the economics
+
+The **prompt cache** (Ch 7) persists a computed prefix across separate API requests. If your large document set is stable across many user turns, you pay the quadratic prefill cost *once*, then amortize it across every subsequent request that hits the cache.
+
+Without caching, every new request re-pays the full prefill cost. With a stable cached prefix, subsequent requests pay only the cache-read rate on the prefix plus the full cost of the new content. Cache-read rates are substantially cheaper than uncached input. The economics work when the same prefix is read many times relative to writes.
+
+**A qualitative scenario:** a team analyzing the same 400K-token contract database each session. Without caching, every request pays full prefill for 400K tokens. With caching, they write the prefix once at the higher write rate, then read it at the much lower read rate on every subsequent request. After roughly two or three requests, the cumulative savings exceed the write premium — and from there, every request is substantially cheaper while seeing the full corpus rather than a RAG-selected subset.
+
+The same scenario breaks down if the corpus changes daily (cache invalidated constantly) or different users need different subsets (no shared stable prefix to cache). In those cases, RAG wins on both cost and freshness.
+
+---
+
+## Long context vs. RAG — when each wins
+
+The framing "long context vs. RAG" is partly false — in most real systems, they complement each other. But the tradeoffs are real.
+
+**Long context wins when:**
+- You need cross-document reasoning that can't be predicted at retrieval time.
+- The answer requires synthesizing distributed details — no single retrieval query would surface all of them.
+- The corpus fits in the window, is stable, and can be cached.
+
+**RAG wins when:**
+- The corpus is too large for any context window.
+- Freshness matters — retrieved documents update continuously.
+- Only a small fraction of the corpus is relevant per query — loading everything adds distractors and pays unnecessary cost.
+- Multiple users need different subsets (no shared stable prefix to cache).
+
+**The cache flips the comparison.** Without caching, long-context is almost always more expensive than targeted RAG for high-volume use. With a stable cached prefix, the per-request cost drops toward the cost of the new turn only — making long-context competitive for moderate corpus sizes. The practical optimum is not "RAG vs. long context" but "cached stable prefix plus targeted retrieval for per-query specifics."
+
+**Needles vs. patterns.** On tasks where the relevant information is a specific locatable fact, RAG often yields higher answer quality despite the smaller context — fewer distractors, cleaner signal. When the relevant information is a distributed pattern requiring synthesis across many parts of a document, long context wins because no chunked retrieval strategy would surface all of it.
+
+<div className="lc-decision-tree">{`Do I have a specific, locatable fact to find?
+  → Yes: RAG (precise, cheaper, fewer distractors)
+  → No: Does the answer require synthesizing across the whole document?
+        → Yes: Long context — with cache if corpus is stable
+        → No: Is the relevant subset predictable in advance?
+              → Yes: Pre-load stable bundle (long context + cache)
+              → No: Dynamic RAG with per-query retrieval`}</div>
+
+---
+
+## Three misconceptions
+
+<div className="misconceptions-list">
+  <div className="misconception-card">
+    <div className="mc-myth">1M context = perfect 1M recall</div>
+    <div className="mc-reality">
+      Capacity is not effective use. A 1M-token window means the model accepts 1M tokens — not that it retrieves any given fact at position 800K with the same reliability as at position 100. No published benchmark has demonstrated near-perfect recall across the full 1M range for any model.
+    </div>
+  </div>
+  <div className="misconception-card">
+    <div className="mc-myth">Long context replaces RAG</div>
+    <div className="mc-reality">
+      Long context does not scale to massive corpora, does not handle freshness automatically, and is expensive without caching. RAG is not superseded by large windows — it is complementary. The practical optimum for most production systems is a hybrid: cached stable knowledge bundle plus per-query retrieval.
+    </div>
+  </div>
+  <div className="misconception-card">
+    <div className="mc-myth">NIAH scores prove long-context works</div>
+    <div className="mc-reality">
+      Near-perfect NIAH scores prove a model can find a single synthetic fact in a large filler document. RULER showed that extending to multi-needle and more complex tasks reveals substantial degradation at the same context length. NIAH is a minimum bar, not a capability certificate. A model that aces NIAH may still fail meaningfully on real multi-document reasoning.
+    </div>
+  </div>
+</div>
+
+---
 
 <CacheCallout label="Chapter takeaway">
-  Coming soon — see `docs/research/long-context.md` for the prose, citations, diagrams, and demo proposals that will become this chapter.
+
+Long context and the prompt cache (Ch 7) are a pair. The context window gives you space; the cache makes using that space economically viable across many turns.
+
+Without caching, every new request re-pays the full quadratic prefill cost for every token in your document set. With a stable cached prefix, subsequent requests read those tokens at cache-read rates, which are dramatically cheaper. The "stable content early, mutable late" discipline from Ch 7 applies double here: your large document corpus belongs at the front of the prefix, before the cache breakpoint; the user's question belongs at the end, uncached.
+
+**The mid-context trap.** The worst position for load-bearing content is the middle — too far from the high-recall endpoints, and too deep in the prefix to benefit from cache amortization that the early stable content enjoys. If you must put critical content in the middle, summarize it explicitly at the end: *"As stated earlier, the key constraint is: [X]."* This gives the model a second chance at the endpoint where recall is highest.
+
 </CacheCallout>
